@@ -76,6 +76,7 @@ func RegisterRoutes(r *gin.Engine, hub *Hub) {
 		// Internal API calls for Fail2ban-UI settings
 		api.GET("/settings", GetSettingsHandler)
 		api.POST("/settings", UpdateSettingsHandler)
+		//api.PATCH("/settings", PatchSettingsHandler)
 		api.POST("/settings/test-email", TestEmailHandler)
 		api.POST("/settings/test-webhook", TestWebhookHandler)
 		api.POST("/settings/test-elasticsearch", TestElasticsearchHandler)
