@@ -315,6 +315,10 @@ func SummaryHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	for i := range jailInfos {
+		// Summary should only expose counters; banned IPs are loaded lazily via /api/jails/:jail/banned.
+		jailInfos[i].BannedIPs = []string{}
+	}
 
 	resp := SummaryResponse{
 		Jails: jailInfos,
@@ -335,6 +339,84 @@ func SummaryHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// Returns paginated banned IPs for a specific jail on the selected server.
+func ListJailBannedIPsHandler(c *gin.Context) {
+	jail := c.Param("jail")
+	if err := fail2ban.ValidateJailName(jail); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	conn, err := resolveConnector(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	const (
+		defaultLimit = 5
+		maxLimit     = 100
+		maxOffset    = 100000
+	)
+
+	limit := defaultLimit
+	if limitStr := c.DefaultQuery("limit", strconv.Itoa(defaultLimit)); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			if parsed <= maxLimit {
+				limit = parsed
+			} else {
+				limit = maxLimit
+			}
+		}
+	}
+
+	offset := 0
+	if offsetStr := c.DefaultQuery("offset", "0"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			if parsed <= maxOffset {
+				offset = parsed
+			} else {
+				offset = maxOffset
+			}
+		}
+	}
+
+	query := strings.TrimSpace(c.Query("q"))
+	allIPs, err := conn.GetBannedIPs(c.Request.Context(), jail)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	filtered := allIPs
+	if query != "" {
+		lowerQuery := strings.ToLower(query)
+		filtered = make([]string, 0, len(allIPs))
+		for _, ip := range allIPs {
+			if strings.Contains(strings.ToLower(ip), lowerQuery) {
+				filtered = append(filtered, ip)
+			}
+		}
+	}
+
+	total := len(filtered)
+	if offset > total {
+		offset = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	paged := filtered[offset:end]
+
+	c.JSON(http.StatusOK, gin.H{
+		"jail":      jail,
+		"bannedIPs": paged,
+		"total":     total,
+		"hasMore":   end < total,
+	})
 }
 
 // =========================================================================
