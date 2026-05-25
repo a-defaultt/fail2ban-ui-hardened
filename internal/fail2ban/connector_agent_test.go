@@ -225,3 +225,83 @@ func TestAgentConnectorEnsureStructurePassesManagedContent(t *testing.T) {
 		t.Fatalf("expected full managed content payload, got: %s", content)
 	}
 }
+
+func TestAgentConnectorTestLogpathPropagatesAgentError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/callback/config" {
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path == "/v1/jails/test-logpath" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"boom"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	server := shared.Fail2banServer{
+		ID:          "s1",
+		Name:        "agent",
+		Type:        "agent",
+		AgentURL:    srv.URL,
+		AgentSecret: "secret123",
+	}
+	c, err := NewAgentConnector(server)
+	if err != nil {
+		t.Fatalf("new connector: %v", err)
+	}
+	ac := c.(*AgentConnector)
+
+	_, err = ac.TestLogpath(context.Background(), "/var/log/auth.log")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Fatalf("expected HTTP status in error, got: %v", err)
+	}
+}
+
+func TestAgentConnectorTestFilterParsesErrorPayload(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/callback/config" {
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path == "/v1/filters/test" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"regex failed","output":"fail2ban-regex output","filterPath":"/tmp/filter.conf"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	server := shared.Fail2banServer{
+		ID:          "s1",
+		Name:        "agent",
+		Type:        "agent",
+		AgentURL:    srv.URL,
+		AgentSecret: "secret123",
+	}
+	c, err := NewAgentConnector(server)
+	if err != nil {
+		t.Fatalf("new connector: %v", err)
+	}
+	ac := c.(*AgentConnector)
+
+	output, filterPath, err := ac.TestFilter(context.Background(), "sshd", []string{"foo"}, "")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "regex failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if output != "fail2ban-regex output" {
+		t.Fatalf("unexpected output: %q", output)
+	}
+	if filterPath != "/tmp/filter.conf" {
+		t.Fatalf("unexpected filter path: %q", filterPath)
+	}
+}

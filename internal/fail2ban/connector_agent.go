@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -45,6 +46,16 @@ type AgentConnector struct {
 	server shared.Fail2banServer
 	base   *url.URL
 	client *http.Client
+}
+
+type agentHTTPError struct {
+	StatusCode int
+	Status     string
+	Body       string
+}
+
+func (e *agentHTTPError) Error() string {
+	return fmt.Sprintf("agent request failed: %s (%s)", e.Status, e.Body)
 }
 
 // =========================================================================
@@ -292,7 +303,11 @@ func (ac *AgentConnector) do(req *http.Request, out any) error {
 	debugf("Agent response [%s]: %s | %s", ac.server.Name, resp.Status, preview)
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("agent request failed: %s (%s)", resp.Status, trimmed)
+		return &agentHTTPError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       trimmed,
+		}
 	}
 
 	if out == nil {
@@ -346,6 +361,27 @@ func (ac *AgentConnector) TestFilter(ctx context.Context, filterName string, log
 		FilterPath string `json:"filterPath"`
 	}
 	if err := ac.post(ctx, "/v1/filters/test", payload, &resp); err != nil {
+		var httpErr *agentHTTPError
+		if errors.As(err, &httpErr) {
+			var fail struct {
+				Error      string `json:"error"`
+				Output     string `json:"output"`
+				FilterPath string `json:"filterPath"`
+			}
+			if json.Unmarshal([]byte(httpErr.Body), &fail) == nil {
+				filterPath := fail.FilterPath
+				if filterPath == "" {
+					filterPath = fmt.Sprintf("/etc/fail2ban/filter.d/%s.conf", filterName)
+				}
+				if strings.TrimSpace(fail.Error) != "" || strings.TrimSpace(fail.Output) != "" || strings.TrimSpace(fail.FilterPath) != "" {
+					errMsg := fail.Error
+					if strings.TrimSpace(errMsg) == "" {
+						errMsg = httpErr.Error()
+					}
+					return fail.Output, filterPath, fmt.Errorf("%s", errMsg)
+				}
+			}
+		}
 		return "", "", err
 	}
 	filterPath := resp.FilterPath
@@ -385,7 +421,7 @@ func (ac *AgentConnector) TestLogpath(ctx context.Context, logpath string) ([]st
 		Files []string `json:"files"`
 	}
 	if err := ac.post(ctx, "/v1/jails/test-logpath", payload, &resp); err != nil {
-		return []string{}, nil
+		return nil, err
 	}
 	return resp.Files, nil
 }
