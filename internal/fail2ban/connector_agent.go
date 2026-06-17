@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -47,6 +48,100 @@ type AgentConnector struct {
 	client *http.Client
 }
 
+type AgentConfigErrorKind string
+
+const (
+	AgentConfigErrorMissingURL    AgentConfigErrorKind = "missing_url"
+	AgentConfigErrorMissingSecret AgentConfigErrorKind = "missing_secret"
+	AgentConfigErrorInvalidURL    AgentConfigErrorKind = "invalid_url"
+)
+
+type AgentConfigError struct {
+	Kind AgentConfigErrorKind
+	Err  error
+}
+
+func (e *AgentConfigError) Error() string {
+	switch e.Kind {
+	case AgentConfigErrorMissingURL:
+		return "agentUrl is required for agent connector"
+	case AgentConfigErrorMissingSecret:
+		return "agentSecret is required for agent connector"
+	case AgentConfigErrorInvalidURL:
+		if e.Err != nil {
+			return fmt.Sprintf("invalid agentUrl: %v", e.Err)
+		}
+		return "invalid agentUrl"
+	default:
+		if e.Err != nil {
+			return e.Err.Error()
+		}
+		return "agent configuration error"
+	}
+}
+
+func (e *AgentConfigError) Unwrap() error {
+	return e.Err
+}
+
+type AgentHTTPError struct {
+	StatusCode int
+	Status     string
+	Body       string
+	Code       string
+	Message    string
+}
+
+func (e *AgentHTTPError) Error() string {
+	if strings.TrimSpace(e.Code) != "" {
+		return fmt.Sprintf("agent request failed: %s [%s] (%s)", e.Status, e.Code, e.Body)
+	}
+	return fmt.Sprintf("agent request failed: %s (%s)", e.Status, e.Body)
+}
+
+type AgentTransportError struct {
+	Err error
+}
+
+func (e *AgentTransportError) Error() string {
+	return fmt.Sprintf("agent request failed: %v", e.Err)
+}
+
+func (e *AgentTransportError) Unwrap() error {
+	return e.Err
+}
+
+func AgentErrorMessageKey(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	var cfgErr *AgentConfigError
+	if errors.As(err, &cfgErr) {
+		switch cfgErr.Kind {
+		case AgentConfigErrorMissingURL, AgentConfigErrorMissingSecret:
+			return "servers.errors.agent_missing_config"
+		case AgentConfigErrorInvalidURL:
+			return "servers.errors.agent_invalid_url"
+		}
+	}
+
+	var transportErr *AgentTransportError
+	if errors.As(err, &transportErr) {
+		return "servers.errors.agent_unreachable"
+	}
+
+	var httpErr *AgentHTTPError
+	if errors.As(err, &httpErr) {
+		if httpErr.StatusCode == http.StatusUnauthorized {
+			return "servers.errors.agent_wrong_secret"
+		}
+		return "servers.errors.agent_request_failed"
+	}
+
+	return ""
+}
+
 // =========================================================================
 //  Constructor
 // =========================================================================
@@ -54,14 +149,14 @@ type AgentConnector struct {
 // Create a new AgentConnector for the given server config.
 func NewAgentConnector(server shared.Fail2banServer) (Connector, error) {
 	if server.AgentURL == "" {
-		return nil, fmt.Errorf("agentUrl is required for agent connector")
+		return nil, &AgentConfigError{Kind: AgentConfigErrorMissingURL}
 	}
 	if server.AgentSecret == "" {
-		return nil, fmt.Errorf("agentSecret is required for agent connector")
+		return nil, &AgentConfigError{Kind: AgentConfigErrorMissingSecret}
 	}
 	parsed, err := NormalizeAgentURL(server.AgentURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid agentUrl: %w", err)
+		return nil, &AgentConfigError{Kind: AgentConfigErrorInvalidURL, Err: err}
 	}
 	client := &http.Client{
 		Timeout: 15 * time.Second,
@@ -275,7 +370,7 @@ func (ac *AgentConnector) do(req *http.Request, out any) error {
 	resp, err := ac.client.Do(req)
 	if err != nil {
 		debugf("Agent request error [%s]: %v", ac.server.Name, err)
-		return fmt.Errorf("agent request failed: %w", err)
+		return &AgentTransportError{Err: err}
 	}
 	defer resp.Body.Close()
 
@@ -292,7 +387,18 @@ func (ac *AgentConnector) do(req *http.Request, out any) error {
 	debugf("Agent response [%s]: %s | %s", ac.server.Name, resp.Status, preview)
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("agent request failed: %s (%s)", resp.Status, trimmed)
+		var payload struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}
+		_ = json.Unmarshal([]byte(trimmed), &payload)
+		return &AgentHTTPError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       trimmed,
+			Code:       strings.TrimSpace(payload.Code),
+			Message:    strings.TrimSpace(payload.Error),
+		}
 	}
 
 	if out == nil {
@@ -346,6 +452,27 @@ func (ac *AgentConnector) TestFilter(ctx context.Context, filterName string, log
 		FilterPath string `json:"filterPath"`
 	}
 	if err := ac.post(ctx, "/v1/filters/test", payload, &resp); err != nil {
+		var httpErr *AgentHTTPError
+		if errors.As(err, &httpErr) {
+			var fail struct {
+				Error      string `json:"error"`
+				Output     string `json:"output"`
+				FilterPath string `json:"filterPath"`
+			}
+			if json.Unmarshal([]byte(httpErr.Body), &fail) == nil {
+				filterPath := fail.FilterPath
+				if filterPath == "" {
+					filterPath = fmt.Sprintf("/etc/fail2ban/filter.d/%s.conf", filterName)
+				}
+				if strings.TrimSpace(fail.Error) != "" || strings.TrimSpace(fail.Output) != "" || strings.TrimSpace(fail.FilterPath) != "" {
+					errMsg := fail.Error
+					if strings.TrimSpace(errMsg) == "" {
+						errMsg = httpErr.Error()
+					}
+					return fail.Output, filterPath, fmt.Errorf("%s", errMsg)
+				}
+			}
+		}
 		return "", "", err
 	}
 	filterPath := resp.FilterPath
@@ -385,7 +512,7 @@ func (ac *AgentConnector) TestLogpath(ctx context.Context, logpath string) ([]st
 		Files []string `json:"files"`
 	}
 	if err := ac.post(ctx, "/v1/jails/test-logpath", payload, &resp); err != nil {
-		return []string{}, nil
+		return nil, err
 	}
 	return resp.Files, nil
 }
@@ -443,8 +570,9 @@ func (ac *AgentConnector) CheckJailLocalIntegrity(ctx context.Context) (bool, bo
 		Managed     bool `json:"managed"`
 	}
 	if err := ac.get(ctx, "/v1/jails/check-integrity", &result); err != nil {
-		// If the agent does not implement this endpoint, assume OK
-		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
+		var httpErr *AgentHTTPError
+		// If the agent does not implement this endpoint, assume OK.
+		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
 			return false, false, nil
 		}
 		return false, false, fmt.Errorf("failed to check jail.local integrity on %s: %w", ac.server.Name, err)

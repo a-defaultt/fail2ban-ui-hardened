@@ -298,6 +298,18 @@ func resolveServerForNotification(serverID, hostname string) (config.Fail2banSer
 	return srv, nil
 }
 
+func buildErrorResponse(err error, fallbackKey string) gin.H {
+	resp := gin.H{"error": err.Error()}
+	if key := fail2ban.AgentErrorMessageKey(err); key != "" {
+		resp["messageKey"] = key
+		return resp
+	}
+	if fallbackKey != "" {
+		resp["messageKey"] = fallbackKey
+	}
+	return resp
+}
+
 // =========================================================================
 //  Dashboard
 // =========================================================================
@@ -306,13 +318,13 @@ func resolveServerForNotification(serverID, hostname string) (config.Fail2banSer
 func SummaryHandler(c *gin.Context) {
 	conn, err := resolveConnector(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, buildErrorResponse(err, "dashboard.errors.summary_failed"))
 		return
 	}
 
 	jailInfos, err := conn.GetJailInfos(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, buildErrorResponse(err, "dashboard.errors.summary_failed"))
 		return
 	}
 	for i := range jailInfos {
@@ -351,7 +363,7 @@ func ListJailBannedIPsHandler(c *gin.Context) {
 
 	conn, err := resolveConnector(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, buildErrorResponse(err, "dashboard.errors.summary_failed"))
 		return
 	}
 
@@ -386,7 +398,7 @@ func ListJailBannedIPsHandler(c *gin.Context) {
 	query := strings.TrimSpace(c.Query("q"))
 	allIPs, err := conn.GetBannedIPs(c.Request.Context(), jail)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, buildErrorResponse(err, "dashboard.errors.summary_failed"))
 		return
 	}
 
@@ -437,12 +449,12 @@ func BanIPHandler(c *gin.Context) {
 
 	conn, err := resolveConnector(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, buildErrorResponse(err, "dashboard.manual_block.error"))
 		return
 	}
 
 	if err := conn.BanIP(c.Request.Context(), jail, ip); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, buildErrorResponse(err, "dashboard.manual_block.error"))
 		return
 	}
 	fmt.Println(ip + " in jail " + jail + " banned successfully.")
@@ -465,12 +477,12 @@ func UnbanIPHandler(c *gin.Context) {
 
 	conn, err := resolveConnector(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, buildErrorResponse(err, ""))
 		return
 	}
 
 	if err := conn.UnbanIP(c.Request.Context(), jail, ip); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, buildErrorResponse(err, ""))
 		return
 	}
 	fmt.Println(ip + " from jail " + jail + " unbanned successfully.")
@@ -996,12 +1008,18 @@ func UpsertServerHandler(c *gin.Context) {
 		}
 	case "agent":
 		if req.AgentURL == "" || req.AgentSecret == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "agent servers require agentUrl and agentSecret"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":      "agent servers require agentUrl and agentSecret",
+				"messageKey": "servers.errors.agent_missing_config",
+			})
 			return
 		}
 		u, err := fail2ban.NormalizeAgentURL(req.AgentURL)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid agentUrl: " + err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":      "invalid agentUrl: " + err.Error(),
+				"messageKey": "servers.errors.agent_invalid_url",
+			})
 			return
 		}
 		req.AgentURL = u.String()
@@ -1217,12 +1235,12 @@ func TestServerHandler(c *gin.Context) {
 	}
 
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "messageKey": "servers.actions.test_failure"})
+		c.JSON(http.StatusBadRequest, buildErrorResponse(err, "servers.actions.test_failure"))
 		return
 	}
 
 	if _, err := conn.GetJailInfos(ctx); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "messageKey": "servers.actions.test_failure"})
+		c.JSON(http.StatusInternalServerError, buildErrorResponse(err, "servers.actions.test_failure"))
 		return
 	}
 
@@ -3185,7 +3203,7 @@ func RestartFail2banHandler(c *gin.Context) {
 	// Attempts to restart the fail2ban service via the connector.
 	mode, err := fail2ban.RestartFail2ban(server.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, buildErrorResponse(err, ""))
 		return
 	}
 

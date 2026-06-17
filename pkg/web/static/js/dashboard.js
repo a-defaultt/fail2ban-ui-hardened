@@ -79,7 +79,7 @@ function fetchSummaryData() {
         jailLocalWarning = !!data.jailLocalWarning;
       } else {
         latestSummary = null;
-        latestSummaryError = data && data.error ? data.error : t('dashboard.errors.summary_failed', 'Failed to load summary from server.');
+        latestSummaryError = formatApiError(data, 'dashboard.errors.summary_failed', 'Failed to load summary from server.');
         jailLocalWarning = false;
       }
     })
@@ -195,7 +195,7 @@ function fetchJailBannedIPs(jailName, options) {
       state.total = typeof data.total === 'number' ? data.total : state.ips.length;
       state.hasMore = data && data.hasMore === true;
       state.loadedQuery = activeQuery;
-      state.error = data && data.error ? String(data.error) : null;
+      state.error = data && data.error ? formatApiError(data, '', '') : null;
     })
     .catch(function(err) {
       if (!isActiveBannedSearchToken(searchToken)) {
@@ -332,7 +332,7 @@ function banIP(jail, ip) {
     .then(function(res) { return res.json(); })
     .then(function(data) {
       if (data.error) {
-        showToast("Error blocking IP: " + data.error, 'error');
+        showToast(formatApiError(data, '', 'Error blocking IP'), 'error');
       } else {
         showToast(t('dashboard.manual_block.success', 'IP blocked successfully'), 'success');
         return Promise.all([
@@ -378,7 +378,7 @@ function unbanIP(jail, ip) {
     .then(function(res) { return res.json(); })
     .then(function(data) {
       if (data.error) {
-        showToast("Error unbanning IP: " + data.error, 'error');
+        showToast(formatApiError(data, '', 'Error unbanning IP'), 'error');
         return;
       }
       return Promise.all([

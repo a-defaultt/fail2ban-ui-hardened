@@ -3,6 +3,7 @@ package fail2ban
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -223,5 +224,181 @@ func TestAgentConnectorEnsureStructurePassesManagedContent(t *testing.T) {
 	content, _ := raw.(string)
 	if !strings.Contains(content, "action_mwlg") || !strings.Contains(content, "ui-custom-action") {
 		t.Fatalf("expected full managed content payload, got: %s", content)
+	}
+}
+
+func TestAgentConnectorTestLogpathPropagatesAgentError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/callback/config" {
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path == "/v1/jails/test-logpath" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"boom"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	server := shared.Fail2banServer{
+		ID:          "s1",
+		Name:        "agent",
+		Type:        "agent",
+		AgentURL:    srv.URL,
+		AgentSecret: "secret123",
+	}
+	c, err := NewAgentConnector(server)
+	if err != nil {
+		t.Fatalf("new connector: %v", err)
+	}
+	ac := c.(*AgentConnector)
+
+	_, err = ac.TestLogpath(context.Background(), "/var/log/auth.log")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Fatalf("expected HTTP status in error, got: %v", err)
+	}
+}
+
+func TestAgentConnectorTestFilterParsesErrorPayload(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/callback/config" {
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path == "/v1/filters/test" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"regex failed","output":"fail2ban-regex output","filterPath":"/tmp/filter.conf"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	server := shared.Fail2banServer{
+		ID:          "s1",
+		Name:        "agent",
+		Type:        "agent",
+		AgentURL:    srv.URL,
+		AgentSecret: "secret123",
+	}
+	c, err := NewAgentConnector(server)
+	if err != nil {
+		t.Fatalf("new connector: %v", err)
+	}
+	ac := c.(*AgentConnector)
+
+	output, filterPath, err := ac.TestFilter(context.Background(), "sshd", []string{"foo"}, "")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "regex failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if output != "fail2ban-regex output" {
+		t.Fatalf("unexpected output: %q", output)
+	}
+	if filterPath != "/tmp/filter.conf" {
+		t.Fatalf("unexpected filter path: %q", filterPath)
+	}
+}
+
+func TestNewAgentConnectorReturnsTypedConfigErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		server shared.Fail2banServer
+		kind   AgentConfigErrorKind
+	}{
+		{
+			name: "missing url",
+			server: shared.Fail2banServer{
+				Type:        "agent",
+				AgentSecret: "secret",
+			},
+			kind: AgentConfigErrorMissingURL,
+		},
+		{
+			name: "missing secret",
+			server: shared.Fail2banServer{
+				Type:     "agent",
+				AgentURL: "http://127.0.0.1:9700",
+			},
+			kind: AgentConfigErrorMissingSecret,
+		},
+		{
+			name: "invalid url",
+			server: shared.Fail2banServer{
+				Type:        "agent",
+				AgentURL:    "://bad",
+				AgentSecret: "secret",
+			},
+			kind: AgentConfigErrorInvalidURL,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewAgentConnector(tt.server)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			var cfgErr *AgentConfigError
+			if !errors.As(err, &cfgErr) {
+				t.Fatalf("expected AgentConfigError, got %T: %v", err, err)
+			}
+			if cfgErr.Kind != tt.kind {
+				t.Fatalf("kind=%s want %s", cfgErr.Kind, tt.kind)
+			}
+		})
+	}
+}
+
+func TestAgentConnectorUnauthorizedIncludesStructuredCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/callback/config" {
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path == "/v1/jails" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"unauthorized","code":"auth_invalid_token"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	server := shared.Fail2banServer{
+		ID:          "s1",
+		Name:        "agent",
+		Type:        "agent",
+		AgentURL:    srv.URL,
+		AgentSecret: "wrong-secret",
+	}
+	c, err := NewAgentConnector(server)
+	if err != nil {
+		t.Fatalf("new connector: %v", err)
+	}
+	_, err = c.GetJailInfos(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var httpErr *AgentHTTPError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("expected AgentHTTPError, got %T: %v", err, err)
+	}
+	if httpErr.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status=%d want %d", httpErr.StatusCode, http.StatusUnauthorized)
+	}
+	if httpErr.Code != "auth_invalid_token" {
+		t.Fatalf("code=%q", httpErr.Code)
+	}
+	if got := AgentErrorMessageKey(err); got != "servers.errors.agent_wrong_secret" {
+		t.Fatalf("message key=%q", got)
 	}
 }
