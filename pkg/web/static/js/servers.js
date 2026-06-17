@@ -480,7 +480,7 @@ function submitServerForm(event) {
     .then(function(res) { return res.json(); })
     .then(function(data) {
       if (data.error) {
-        showToast('Error saving server: ' + (data.error || 'Unknown error'), 'error');
+        showToast(formatApiError(data, '', 'Error saving server'), 'error');
         return;
       }
       showToast(t('servers.form.success', 'Server saved successfully.'), 'success');
@@ -617,7 +617,7 @@ function setServerEnabled(serverId, enabled) {
     .then(function(res) { return res.json(); })
     .then(function(data) {
       if (data.error) {
-        showToast('Error saving server: ' + (data.error || 'Unknown error'), 'error');
+        showToast(formatApiError(data, '', 'Error saving server'), 'error');
         return;
       }
       if (!enabled && currentServerId === serverId) {
@@ -657,7 +657,7 @@ function testServerConnection(serverId) {
     .then(function(res) { return res.json(); })
     .then(function(data) {
       if (data.error) {
-        showToast(t(data.messageKey || 'servers.actions.test_failure', data.error), 'error');
+        showToast(formatApiError(data, 'servers.actions.test_failure', 'Connection failed'), 'error');
         return;
       }
       showToast(t(data.messageKey || 'servers.actions.test_success', data.message || 'Connection successful'), 'success');
@@ -680,7 +680,7 @@ function deleteServer(serverId) {
     .then(function(res) { return res.json(); })
     .then(function(data) {
       if (data.error) {
-        showToast('Error deleting server: ' + (data.error || 'Unknown error'), 'error');
+        showToast(formatApiError(data, '', 'Error deleting server'), 'error');
         return;
       }
       if (currentServerId === serverId) {
@@ -710,7 +710,7 @@ function makeDefaultServer(serverId) {
     .then(function(res) { return res.json(); })
     .then(function(data) {
       if (data.error) {
-        showToast('Error setting default server: ' + (data.error || 'Unknown error'), 'error');
+        showToast(formatApiError(data, '', 'Error setting default server'), 'error');
         return;
       }
       currentServerId = data.server ? data.server.id : serverId;
@@ -750,7 +750,7 @@ function restartFail2banServer(serverId) {
     .then(function(res) { return res.json(); })
     .then(function(data) {
       if (data.error) {
-        showToast("Failed to restart Fail2ban: " + data.error, 'error');
+        showToast(formatApiError(data, '', 'Failed to restart Fail2ban'), 'error');
         return;
       }
       var mode = data.mode || 'restart';

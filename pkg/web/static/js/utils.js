@@ -30,6 +30,35 @@ function t(key, fallback) {
   return fallback !== undefined ? fallback : key;
 }
 
+function formatApiError(data, fallbackKey, fallbackText) {
+  var shortMessage = '';
+  if (data && data.messageKey) {
+    shortMessage = t(data.messageKey, fallbackText || fallbackKey || '');
+  } else if (fallbackKey) {
+    shortMessage = t(fallbackKey, fallbackText || fallbackKey);
+  } else if (fallbackText) {
+    shortMessage = fallbackText;
+  }
+
+  if (!shortMessage && data && data.message) {
+    shortMessage = String(data.message);
+  }
+
+  var detail = data && data.error ? String(data.error).trim() : '';
+  if (detail) {
+    if (!shortMessage || detail === shortMessage) {
+      return detail;
+    }
+    return shortMessage + ': ' + detail;
+  }
+
+  if (shortMessage) {
+    return shortMessage;
+  }
+
+  return 'Unknown error';
+}
+
 // =========================================================================
 //  Focus Management
 // =========================================================================
