@@ -101,12 +101,13 @@ type AdvancedActionsConfig struct {
 }
 
 type MikrotikIntegrationSettings struct {
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	Username    string `json:"username"`
-	Password    string `json:"password"`
-	SSHKeyPath  string `json:"sshKeyPath"`
-	AddressList string `json:"addressList"`
+	Host               string `json:"host"`
+	Port               int    `json:"port"`
+	Username           string `json:"username"`
+	Password           string `json:"password"`
+	SSHKeyPath         string `json:"sshKeyPath"`
+	AddressList        string `json:"addressList"`
+	HostKeyFingerprint string `json:"hostKeyFingerprint"`
 }
 
 type PfSenseIntegrationSettings struct {
@@ -742,6 +743,9 @@ func initializeFromJailFile() error {
 			value := matches[2]
 			settings[key] = value
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read %s: %w", jailFile, err)
 	}
 	settingsLock.Lock()
 	defer settingsLock.Unlock()

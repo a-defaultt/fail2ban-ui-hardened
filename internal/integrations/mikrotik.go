@@ -1,9 +1,12 @@
 package integrations
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -91,7 +94,10 @@ func (m *mikrotikIntegration) runCommand(req Request, command string) error {
 		authMethods = append(authMethods, ssh.Password(cfg.Password))
 	}
 	if cfg.SSHKeyPath != "" {
-		key, err := os.ReadFile(cfg.SSHKeyPath)
+		if strings.ContainsRune(cfg.SSHKeyPath, 0) {
+			return fmt.Errorf("invalid mikrotik ssh key path")
+		}
+		key, err := os.ReadFile(filepath.Clean(cfg.SSHKeyPath))
 		if err != nil {
 			return fmt.Errorf("failed to read mikrotik ssh key: %w", err)
 		}
@@ -111,10 +117,14 @@ func (m *mikrotikIntegration) runCommand(req Request, command string) error {
 		port = 22
 	}
 
+	hostKeyCallback, err := mikrotikHostKeyCallback(cfg.HostKeyFingerprint)
+	if err != nil {
+		return err
+	}
 	clientCfg := &ssh.ClientConfig{
 		User:            cfg.Username,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         10 * time.Second,
 	}
 
@@ -153,4 +163,33 @@ func (m *mikrotikIntegration) runCommand(req Request, command string) error {
 		req.Logger("Mikrotik command output: %s", string(output))
 	}
 	return nil
+}
+
+// When fingerprint is empty, host-key verification is skipped. When set, it accepts either an SSH SHA256 fingerprint ("SHA256:...") or full public-key line and verifies the presented key against it.
+func mikrotikHostKeyCallback(fingerprint string) (ssh.HostKeyCallback, error) {
+	trimmed := strings.TrimSpace(fingerprint)
+	if trimmed == "" {
+		return ssh.InsecureIgnoreHostKey(), nil
+	}
+
+	// Full authorized-keys / known_hosts public-key line.
+	if pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(trimmed)); err == nil {
+		want := pubKey.Marshal()
+		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			if subtle.ConstantTimeCompare(key.Marshal(), want) == 1 {
+				return nil
+			}
+			return fmt.Errorf("mikrotik host key mismatch for %s (presented %s)", hostname, ssh.FingerprintSHA256(key))
+		}, nil
+	}
+
+	// SHA256 fingerprint form, with or without the "SHA256:" prefix.
+	wantFP := strings.TrimPrefix(trimmed, "SHA256:")
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		gotFP := strings.TrimPrefix(ssh.FingerprintSHA256(key), "SHA256:")
+		if subtle.ConstantTimeCompare([]byte(gotFP), []byte(wantFP)) == 1 {
+			return nil
+		}
+		return fmt.Errorf("mikrotik host key fingerprint mismatch for %s: presented SHA256:%s", hostname, gotFP)
+	}, nil
 }
