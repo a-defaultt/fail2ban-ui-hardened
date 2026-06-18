@@ -100,13 +100,24 @@ func (sc *SSHConnector) Server() shared.Fail2banServer {
 	return sc.server
 }
 
+// Caps how many concurrent SSH sessions the per-jail status fan-out may open over a single multiplexed master connection. (Keeping this below sshd's default MaxSessions (10) avoids "Session open refused by peer").
+const sshFanoutConcurrency = 4
+
 // Collects jail status for every active remote jail.
 func (sc *SSHConnector) GetJailInfos(ctx context.Context) ([]JailInfo, error) {
 	jails, err := sc.getJails(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return collectJailInfos(ctx, jails, sc.GetBannedIPs)
+	sc.warmControlMaster(ctx)
+	return collectJailInfosLimited(ctx, jails, sc.GetBannedIPs, sshFanoutConcurrency)
+}
+
+// Opens a single SSH session to warm up the ControlMaster socket so it is fully established before any concurrent commands run.
+func (sc *SSHConnector) warmControlMaster(ctx context.Context) {
+	if _, err := sc.runRemoteCommand(ctx, []string{"true"}); err != nil {
+		debugf("SSH control master warm-up failed for %s: %v", sc.server.Name, err)
+	}
 }
 
 // Get banned IPs for a given jail.

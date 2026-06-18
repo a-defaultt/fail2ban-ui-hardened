@@ -73,10 +73,13 @@ func RestartFail2ban(serverID string) (string, error) {
 // bannedIPsFn is the signature used by any connector's GetBannedIPs method.
 type bannedIPsFn func(ctx context.Context, jail string) ([]string, error)
 
-// collectJailInfos fans out to fetch banned IPs for each jail concurrently,
-// then returns the results sorted alphabetically. Both the local and SSH
-// connectors delegate to this function from their GetJailInfos methods.
+// Fans out to fetch banned IPs for each jail concurrently, then returns the results sorted alphabetically. (local connector)
 func collectJailInfos(ctx context.Context, jails []string, getBannedIPs bannedIPsFn) ([]JailInfo, error) {
+	return collectJailInfosLimited(ctx, jails, getBannedIPs, 0)
+}
+
+// Caps the number of concurrent getBannedIPs calls when maxConcurrent > 0. (SSH connector)
+func collectJailInfosLimited(ctx context.Context, jails []string, getBannedIPs bannedIPsFn, maxConcurrent int) ([]JailInfo, error) {
 	type jailResult struct {
 		jail JailInfo
 		err  error
@@ -84,10 +87,19 @@ func collectJailInfos(ctx context.Context, jails []string, getBannedIPs bannedIP
 	results := make(chan jailResult, len(jails))
 	var wg sync.WaitGroup
 
+	var sem chan struct{}
+	if maxConcurrent > 0 {
+		sem = make(chan struct{}, maxConcurrent)
+	}
+
 	for _, jail := range jails {
 		wg.Add(1)
 		go func(j string) {
 			defer wg.Done()
+			if sem != nil {
+				sem <- struct{}{}
+				defer func() { <-sem }()
+			}
 			ips, err := getBannedIPs(ctx, j)
 			if err != nil {
 				results <- jailResult{err: err}
@@ -98,8 +110,7 @@ func collectJailInfos(ctx context.Context, jails []string, getBannedIPs bannedIP
 				jail: JailInfo{
 					JailName:    j,
 					TotalBanned: totalBanned,
-					// Summary returns counters only; per-jail IPs are fetched via /api/jails/:jail/banned.
-					BannedIPs: []string{},
+					BannedIPs:   []string{},
 					Enabled:     true,
 				},
 			}
