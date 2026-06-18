@@ -327,7 +327,15 @@ func SummaryHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, buildErrorResponse(err, "dashboard.errors.summary_failed"))
 		return
 	}
+	serverID := conn.Server().ID
+	since := time.Now().UTC().Add(-1 * time.Hour)
 	for i := range jailInfos {
+		count, countErr := storage.CountRecentBanEventsByJail(c.Request.Context(), serverID, jailInfos[i].JailName, since)
+		if countErr != nil {
+			config.DebugLog("Warning: failed to count recent bans for server %s jail %s: %v", serverID, jailInfos[i].JailName, countErr)
+		} else {
+			jailInfos[i].NewInLastHour = count
+		}
 		// Summary should only expose counters; banned IPs are loaded lazily via /api/jails/:jail/banned.
 		jailInfos[i].BannedIPs = []string{}
 	}
@@ -3432,7 +3440,11 @@ func renderClassicEmailDetails(details []emailDetail) string {
 	}
 	var b strings.Builder
 	for _, d := range details {
-		b.WriteString(`<p><span class="label">` + html.EscapeString(d.Label) + `:</span> ` + html.EscapeString(d.Value) + `</p>`)
+		b.WriteString(`<p><span class="label">`)
+		b.WriteString(html.EscapeString(d.Label))
+		b.WriteString(`:</span> `)
+		b.WriteString(html.EscapeString(d.Value))
+		b.WriteString(`</p>`)
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -3711,7 +3723,11 @@ func renderEmailDetails(details []emailDetail) string {
 	}
 	var b strings.Builder
 	for _, d := range details {
-		b.WriteString(`<p><span class="email-detail-label">` + html.EscapeString(d.Label) + `:</span> ` + html.EscapeString(d.Value) + `</p>`)
+		b.WriteString(`<p><span class="email-detail-label">`)
+		b.WriteString(html.EscapeString(d.Label))
+		b.WriteString(`:</span> `)
+		b.WriteString(html.EscapeString(d.Value))
+		b.WriteString(`</p>`)
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -3754,7 +3770,11 @@ func formatLogsForEmail(ip, logs string, lang string, isModern bool) string {
 			if isSuspiciousLogLineEmail(trimmed, ip) {
 				class = "email-log-line email-log-line-alert"
 			}
-			b.WriteString(`<div class="` + class + `">` + html.EscapeString(trimmed) + `</div>`)
+			b.WriteString(`<div class="`)
+			b.WriteString(class)
+			b.WriteString(`">`)
+			b.WriteString(html.EscapeString(trimmed))
+			b.WriteString(`</div>`)
 		}
 		b.WriteString(`</div>`)
 		return b.String()
