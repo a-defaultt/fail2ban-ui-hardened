@@ -396,6 +396,8 @@
   "settings.advanced.mikrotik.password": "SSH Password",
   "settings.advanced.mikrotik.key": "SSH Key Path (optional)",
   "settings.advanced.mikrotik.list": "Address List Name",
+  "settings.advanced.mikrotik.host_key": "Host Key Fingerprint (optional)",
+  "settings.advanced.mikrotik.host_key_hint": "When set, the router's SSH host key is verified against this fingerprint. Leave empty to skip verification.",
   "settings.advanced.pfsense.note": "Requires the pfSense REST API package. Enter the API key and alias to manage.",
   "settings.advanced.pfsense.install_link": "Install REST API Package",
   "settings.advanced.pfsense.api_key_setup": "Setup API Key",

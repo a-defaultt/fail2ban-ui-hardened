@@ -306,7 +306,7 @@ function openManageJailsModal() {
       const html = data.jails.map(jail => {
         const isEnabled = jail.enabled ? 'checked' : '';
         const escapedJailName = escapeHtml(jail.jailName);
-        const jsEscapedJailName = jail.jailName.replace(/'/g, "\\'");
+        const jsEscapedJailName = escapeJs(jail.jailName);
         return ''
           + '<div class="flex items-center justify-between gap-3 p-3 bg-gray-50">'
           + '  <span class="text-sm font-medium flex-1 text-gray-900">' + escapedJailName + '</span>'

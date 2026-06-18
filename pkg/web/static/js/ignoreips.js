@@ -37,7 +37,8 @@ function addIgnoreIPTag(ip) {
   tag.className = 'ignore-ip-tag inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800';
   tag.dataset.ip = trimmedIP;
   const escapedIP = escapeHtml(trimmedIP);
-  tag.innerHTML = escapedIP + ' <button type="button" class="ml-1 text-blue-600 hover:text-blue-800 focus:outline-none" onclick="removeIgnoreIPTag(\'' + escapedIP.replace(/'/g, "\\'") + '\')">×</button>';
+  const jsEscapedIP = escapeJs(trimmedIP);
+  tag.innerHTML = escapedIP + ' <button type="button" class="ml-1 text-blue-600 hover:text-blue-800 focus:outline-none" onclick="removeIgnoreIPTag(\'' + jsEscapedIP + '\')">×</button>';
   container.appendChild(tag);
   const input = document.getElementById('ignoreIPInput');
   if (input) input.value = '';

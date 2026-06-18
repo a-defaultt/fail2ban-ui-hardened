@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/swissmakers/fail2ban-ui/internal/config"
 )
@@ -42,6 +44,30 @@ func ValidateIP(ip string) error {
 		return nil
 	}
 	return fmt.Errorf("invalid IP address or CIDR: %q", ip)
+}
+
+// Validates that an user-configured base URL is well-formed and uses an allowed scheme (http/https).
+func ValidateOutboundURL(rawURL, label string) error {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return fmt.Errorf("%s is required", label)
+	}
+	if strings.ContainsAny(trimmed, "\r\n") {
+		return fmt.Errorf("%s contains invalid control characters", label)
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("%s is not a valid URL: %w", label, err)
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return fmt.Errorf("%s must use http or https", label)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("%s must include a host", label)
+	}
+	return nil
 }
 
 // Validates that a user-supplied name (address list, alias, etc.) contains only safe characters and cannot be used for injection attacks.

@@ -396,6 +396,8 @@
   "settings.advanced.mikrotik.password": "SSH 密码",
   "settings.advanced.mikrotik.key": "SSH 密钥路径（可选）",
   "settings.advanced.mikrotik.list": "地址列表名称",
+  "settings.advanced.mikrotik.host_key": "主机密钥指纹（可选）",
+  "settings.advanced.mikrotik.host_key_hint": "设置后，将根据此指纹验证路由器的 SSH 主机密钥。留空则跳过验证。",
   "settings.advanced.pfsense.note": "需要 pfSense REST API 包。输入 API 密钥和别名进行管理。",
   "settings.advanced.pfsense.install_link": "安装 REST API 包",
   "settings.advanced.pfsense.api_key_setup": "设置 API 密钥",

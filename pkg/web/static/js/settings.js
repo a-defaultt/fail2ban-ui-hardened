@@ -509,6 +509,8 @@ function applyAdvancedActionsSettings(cfg) {
   if (mkKey) mkKey.value = mk.sshKeyPath || '';
   const mkList = document.getElementById('mikrotikList');
   if (mkList) mkList.value = mk.addressList || 'fail2ban-permanent';
+  const mkHostKey = document.getElementById('mikrotikHostKey');
+  if (mkHostKey) mkHostKey.value = mk.hostKeyFingerprint || '';
 
   const pf = cfg.pfSense || {};
   const pfURL = document.getElementById('pfSenseBaseURL');
@@ -547,6 +549,7 @@ function collectAdvancedActionsSettings() {
       password: document.getElementById('mikrotikPassword').value,
       sshKeyPath: document.getElementById('mikrotikSSHKey').value.trim(),
       addressList: document.getElementById('mikrotikList').value.trim() || 'fail2ban-permanent',
+      hostKeyFingerprint: (document.getElementById('mikrotikHostKey') ? document.getElementById('mikrotikHostKey').value.trim() : ''),
     },
     pfSense: {
       baseUrl: document.getElementById('pfSenseBaseURL').value.trim(),

@@ -159,6 +159,26 @@ function escapeHtml(value) {
   });
 }
 
+// Escape values for safe embedding inside JavaScript string literals and HTML attributes
+function escapeJs(value) {
+  if (value === undefined || value === null) return '';
+  return String(value).replace(/[\\'"<>&\r\n\u2028\u2029]/g, function(match) {
+    switch (match) {
+      case '\\': return '\\\\';
+      case "'": return "\\'";
+      case '"': return '\\"';
+      case '<': return '\\x3C';
+      case '>': return '\\x3E';
+      case '&': return '\\x26';
+      case '\r': return '\\r';
+      case '\n': return '\\n';
+      case '\u2028': return '\\u2028';
+      case '\u2029': return '\\u2029';
+      default: return match;
+    }
+  });
+}
+
 // Format numbers in a human-readable way (1,000,000)
 function formatNumber(value) {
   var num = Number(value);

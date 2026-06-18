@@ -396,6 +396,8 @@
   "settings.advanced.mikrotik.password": "SSHパスワード",
   "settings.advanced.mikrotik.key": "SSHキーパス（任意）",
   "settings.advanced.mikrotik.list": "アドレスリスト名",
+  "settings.advanced.mikrotik.host_key": "ホスト鍵フィンガープリント（任意）",
+  "settings.advanced.mikrotik.host_key_hint": "設定すると、ルーターの SSH ホスト鍵がこのフィンガープリントと照合されます。空欄の場合は検証をスキップします。",
   "settings.advanced.pfsense.note": "pfSense REST APIパッケージが必要です。APIキーと管理対象エイリアスを入力してください。",
   "settings.advanced.pfsense.install_link": "REST APIパッケージをインストール",
   "settings.advanced.pfsense.api_key_setup": "APIキーを設定",
