@@ -32,6 +32,13 @@ func TestNormalizeBasePath(t *testing.T) {
 		{"/myf2b/", "/myf2b"},
 		{"myf2b", "/myf2b"},
 		{"  /app/sub/  ", "/app/sub"},
+		{"//evil.com", ""},
+		{"///evil.com", ""},
+		{"https://evil.com", ""},
+		{"http://evil.com", ""},
+		{"/path\r\nSet-Cookie: x=y", ""},
+		{"\\\\evil.com", ""},
+		{"/a:b", ""},
 	}
 	for _, tt := range tests {
 		if got := NormalizeBasePath(tt.in); got != tt.want {

@@ -27,14 +27,22 @@ var (
 )
 
 // Normalizes a BASE_PATH value for use as an URL path prefix.
-// Empty, "/", or whitespace yields "" (serve at site root).
+// Unsafe values are rejected (treated as root) to prevent the prefix from being used as an open-redirect target
 func NormalizeBasePath(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "/" {
 		return ""
 	}
+	// We reject control characters, backslashes, and scheme separators.
+	if strings.ContainsAny(s, ":\\\r\n") {
+		return ""
+	}
 	if !strings.HasPrefix(s, "/") {
 		s = "/" + s
+	}
+	// We reject protocol-relative paths ("//host"), which browsers resolve to another origin when used in a Location header.
+	if strings.HasPrefix(s, "//") {
+		return ""
 	}
 	return strings.TrimSuffix(s, "/")
 }
