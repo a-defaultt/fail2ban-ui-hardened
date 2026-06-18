@@ -1,0 +1,142 @@
+// Fail2ban UI - A Swiss made, management interface for Fail2ban.
+//
+// Copyright (C) 2025 Swissmakers GmbH (https://swissmakers.ch)
+//
+// Licensed under the GNU General Public License, Version 3 (GPL-3.0)
+// You may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	https://www.gnu.org/licenses/gpl-3.0.en.html
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package storage
+
+import (
+	"context"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+)
+
+func initTestStorage(t *testing.T) {
+	t.Helper()
+
+	if db != nil {
+		_ = db.Close()
+	}
+	db = nil
+	initOnce = sync.Once{}
+	initErr = nil
+
+	dbPath := filepath.Join(t.TempDir(), "fail2ban-ui-test.db")
+	if err := Init(dbPath); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if db != nil {
+			_ = db.Close()
+		}
+		db = nil
+		initOnce = sync.Once{}
+		initErr = nil
+	})
+}
+
+func TestCountRecentBanEventsByJail(t *testing.T) {
+	initTestStorage(t)
+
+	ctx := context.Background()
+	now := time.Date(2026, 5, 27, 14, 30, 0, 123456789, time.UTC)
+	since := now.Add(-1 * time.Hour)
+
+	events := []BanEventRecord{
+		{ServerID: "srv-1", ServerName: "server 1", Jail: "sshd", IP: "192.0.2.10", EventType: "ban", OccurredAt: now.Add(-10 * time.Minute)},
+		{ServerID: "srv-1", ServerName: "server 1", Jail: "sshd", IP: "192.0.2.11", EventType: "ban", OccurredAt: now.Add(-2 * time.Hour)},
+		{ServerID: "srv-1", ServerName: "server 1", Jail: "sshd", IP: "192.0.2.12", EventType: "unban", OccurredAt: now.Add(-5 * time.Minute)},
+		{ServerID: "srv-1", ServerName: "server 1", Jail: "nginx", IP: "192.0.2.13", EventType: "ban", OccurredAt: now.Add(-5 * time.Minute)},
+		{ServerID: "srv-2", ServerName: "server 2", Jail: "sshd", IP: "192.0.2.14", EventType: "ban", OccurredAt: now.Add(-5 * time.Minute)},
+	}
+	for _, event := range events {
+		if err := RecordBanEvent(ctx, event); err != nil {
+			t.Fatalf("RecordBanEvent: %v", err)
+		}
+	}
+
+	got, err := CountRecentBanEventsByJail(ctx, "srv-1", "sshd", since)
+	if err != nil {
+		t.Fatalf("CountRecentBanEventsByJail: %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("recent ban count=%d want 1", got)
+	}
+}
+
+func TestRecordBanEventUsesSortableStorageTime(t *testing.T) {
+	initTestStorage(t)
+
+	ctx := context.Background()
+	occurredAt := time.Date(2026, 5, 27, 14, 27, 38, 369492374, time.UTC)
+	event := BanEventRecord{
+		ServerID:   "srv-1",
+		ServerName: "server 1",
+		Jail:       "sshd",
+		IP:         "192.0.2.10",
+		EventType:  "ban",
+		OccurredAt: occurredAt,
+	}
+	if err := RecordBanEvent(ctx, event); err != nil {
+		t.Fatalf("RecordBanEvent: %v", err)
+	}
+
+	var rawOccurredAt string
+	if err := db.QueryRowContext(ctx, `SELECT occurred_at FROM ban_events WHERE server_id = ? AND jail = ?`, "srv-1", "sshd").Scan(&rawOccurredAt); err != nil {
+		t.Fatalf("query occurred_at: %v", err)
+	}
+	if want := formatStorageTime(occurredAt); rawOccurredAt != want {
+		t.Fatalf("occurred_at=%q want %q", rawOccurredAt, want)
+	}
+
+	got, err := CountRecentBanEventsByJail(ctx, "srv-1", "sshd", occurredAt.Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("CountRecentBanEventsByJail: %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("recent ban count=%d want 1", got)
+	}
+}
+
+func TestCountRecentBanEventsByJailSupportsLegacyTimestampText(t *testing.T) {
+	initTestStorage(t)
+
+	ctx := context.Background()
+	since := time.Date(2026, 5, 27, 13, 30, 0, 0, time.UTC)
+	_, err := db.ExecContext(ctx, `
+INSERT INTO ban_events (server_id, server_name, jail, ip, event_type, occurred_at, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"srv-1",
+		"server 1",
+		"sshd",
+		"192.0.2.10",
+		"ban",
+		"2026-05-27 14:27:38.369492374 +0000 UTC",
+		"2026-05-27 14:27:38.369492374 +0000 UTC",
+	)
+	if err != nil {
+		t.Fatalf("insert legacy event: %v", err)
+	}
+
+	got, err := CountRecentBanEventsByJail(ctx, "srv-1", "sshd", since)
+	if err != nil {
+		t.Fatalf("CountRecentBanEventsByJail: %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("recent ban count=%d want 1", got)
+	}
+}

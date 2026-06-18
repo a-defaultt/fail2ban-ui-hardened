@@ -71,6 +71,49 @@ func intFromNull(ni sql.NullInt64) int {
 	return 0
 }
 
+const (
+	storageTimeFormat       = "2006-01-02T15:04:05.000000000Z"
+	legacyStorageTimeFormat = "2006-01-02 15:04:05.999999999"
+)
+
+func formatStorageTime(t time.Time) string {
+	return t.UTC().Format(storageTimeFormat)
+}
+
+func formatLegacyStorageTime(t time.Time) string {
+	return t.UTC().Format(legacyStorageTimeFormat)
+}
+
+func parseStorageTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, errors.New("empty timestamp")
+	}
+	formats := []string{
+		storageTimeFormat,
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02 15:04:05 -0700 MST",
+		legacyStorageTimeFormat,
+		"2006-01-02 15:04:05",
+	}
+	for _, format := range formats {
+		if parsed, err := time.Parse(format, value); err == nil {
+			return parsed.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unsupported timestamp format %q", value)
+}
+
+func addOccurredAtSinceFilter(query *string, args *[]any, since time.Time) {
+	if since.IsZero() {
+		return
+	}
+	*query += " AND (CAST(occurred_at AS TEXT) >= ? OR (instr(CAST(occurred_at AS TEXT), 'T') = 0 AND CAST(occurred_at AS TEXT) >= ?))"
+	*args = append(*args, formatStorageTime(since), formatLegacyStorageTime(since))
+}
+
 // =========================================================================
 //  Types
 // =========================================================================
@@ -569,8 +612,8 @@ INSERT INTO ban_events (
 		record.Whois,
 		record.Logs,
 		eventType,
-		record.OccurredAt.UTC(),
-		record.CreatedAt.UTC(),
+		formatStorageTime(record.OccurredAt),
+		formatStorageTime(record.CreatedAt),
 	)
 	if err != nil {
 		return err
@@ -599,10 +642,7 @@ WHERE 1=1`
 		baseQuery += " AND server_id = ?"
 		args = append(args, serverID)
 	}
-	if !since.IsZero() {
-		baseQuery += " AND occurred_at >= ?"
-		args = append(args, since.UTC())
-	}
+	addOccurredAtSinceFilter(&baseQuery, &args, since)
 
 	baseQuery += " ORDER BY occurred_at DESC LIMIT ?"
 	args = append(args, limit)
@@ -676,10 +716,7 @@ WHERE 1=1`
 		baseQuery += " AND server_id = ?"
 		args = append(args, serverID)
 	}
-	if !since.IsZero() {
-		baseQuery += " AND occurred_at >= ?"
-		args = append(args, since.UTC())
-	}
+	addOccurredAtSinceFilter(&baseQuery, &args, since)
 	search = strings.TrimSpace(search)
 	if search != "" {
 		baseQuery += " AND (ip LIKE ? OR jail LIKE ? OR server_name LIKE ? OR COALESCE(hostname,'') LIKE ? OR COALESCE(country,'') LIKE ?)"
@@ -750,10 +787,7 @@ func CountBanEventsFiltered(ctx context.Context, serverID string, since time.Tim
 		query += " AND server_id = ?"
 		args = append(args, serverID)
 	}
-	if !since.IsZero() {
-		query += " AND occurred_at >= ?"
-		args = append(args, since.UTC())
-	}
+	addOccurredAtSinceFilter(&query, &args, since)
 	search = strings.TrimSpace(search)
 	if search != "" {
 		query += " AND (ip LIKE ? OR jail LIKE ? OR server_name LIKE ? OR COALESCE(hostname,'') LIKE ? OR COALESCE(country,'') LIKE ?)"
@@ -790,10 +824,7 @@ FROM ban_events
 WHERE 1=1`
 	args := []any{}
 
-	if !since.IsZero() {
-		query += " AND occurred_at >= ?"
-		args = append(args, since.UTC())
-	}
+	addOccurredAtSinceFilter(&query, &args, since)
 
 	query += " GROUP BY server_id"
 
@@ -833,13 +864,60 @@ WHERE 1=1`
 		args = append(args, serverID)
 	}
 
-	if !since.IsZero() {
-		query += " AND occurred_at >= ?"
-		args = append(args, since.UTC())
-	}
+	addOccurredAtSinceFilter(&query, &args, since)
 
 	var total int64
 	if err := db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// CountRecentBanEventsByJail returns ban events for one server and jail since the provided timestamp.
+func CountRecentBanEventsByJail(ctx context.Context, serverID, jail string, since time.Time) (int, error) {
+	if db == nil {
+		return 0, errors.New("storage not initialised")
+	}
+	if serverID == "" {
+		return 0, errors.New("server id is required")
+	}
+	if jail == "" {
+		return 0, errors.New("jail is required")
+	}
+
+	query := `
+SELECT occurred_at
+FROM ban_events
+WHERE server_id = ?
+  AND jail = ?
+  AND (event_type = 'ban' OR event_type IS NULL)`
+	rows, err := db.QueryContext(ctx, query, serverID, jail)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	since = since.UTC()
+	var total int
+	for rows.Next() {
+		var rawOccurredAt string
+		if err := rows.Scan(&rawOccurredAt); err != nil {
+			return 0, err
+		}
+		if since.IsZero() {
+			total++
+			continue
+		}
+		occurredAt, err := parseStorageTime(rawOccurredAt)
+		if err != nil {
+			log.Printf("WARNING: skipping ban event with unparsable occurred_at %q for server %s jail %s: %v", rawOccurredAt, serverID, jail, err)
+			continue
+		}
+		if !occurredAt.Before(since) {
+			total++
+		}
+	}
+	if err := rows.Err(); err != nil {
 		return 0, err
 	}
 	return total, nil
@@ -889,10 +967,7 @@ WHERE 1=1`
 		args = append(args, serverID)
 	}
 
-	if !since.IsZero() {
-		query += " AND occurred_at >= ?"
-		args = append(args, since.UTC())
-	}
+	addOccurredAtSinceFilter(&query, &args, since)
 
 	query += " GROUP BY COALESCE(country, '')"
 
@@ -955,10 +1030,7 @@ WHERE ip != '' AND (event_type = 'ban' OR event_type IS NULL)`
 		args = append(args, serverID)
 	}
 
-	if !since.IsZero() {
-		query += " AND occurred_at >= ?"
-		args = append(args, since.UTC())
-	}
+	addOccurredAtSinceFilter(&query, &args, since)
 
 	query += `
 GROUP BY ip, COALESCE(country, '')
@@ -1106,6 +1178,7 @@ CREATE TABLE IF NOT EXISTS ban_events (
 CREATE INDEX IF NOT EXISTS idx_ban_events_server_id ON ban_events(server_id);
 CREATE INDEX IF NOT EXISTS idx_ban_events_occurred_at ON ban_events(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_ban_events_ip ON ban_events(ip);
+CREATE INDEX IF NOT EXISTS idx_ban_events_server_jail_occurred_at ON ban_events(server_id, jail, occurred_at);
 
 CREATE TABLE IF NOT EXISTS permanent_blocks (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
