@@ -396,6 +396,8 @@
   "settings.advanced.mikrotik.password": "SSH-Passwort",
   "settings.advanced.mikrotik.key": "SSH-Key-Pfad (optional)",
   "settings.advanced.mikrotik.list": "Address-Listenname",
+  "settings.advanced.mikrotik.host_key": "Host-Key-Fingerprint (optional)",
+  "settings.advanced.mikrotik.host_key_hint": "Wenn gesetzt, wird der SSH-Host-Key des Routers gegen diesen Fingerprint geprüft. Leer lassen, um die Prüfung zu überspringen.",
   "settings.advanced.pfsense.note": "Benötigt das pfSense REST API-Paket. Gib den API-Schlüssel und den Alias-Namen ein.",
   "settings.advanced.pfsense.install_link": "REST API-Paket installieren",
   "settings.advanced.pfsense.api_key_setup": "API-Schlüssel einrichten",

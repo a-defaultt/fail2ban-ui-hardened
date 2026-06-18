@@ -396,6 +396,8 @@
   "settings.advanced.mikrotik.password": "Mot de passe SSH",
   "settings.advanced.mikrotik.key": "Chemin de clé SSH (optionnel)",
   "settings.advanced.mikrotik.list": "Nom de la liste",
+  "settings.advanced.mikrotik.host_key": "Empreinte de la clé d'hôte (optionnel)",
+  "settings.advanced.mikrotik.host_key_hint": "Si renseignée, la clé d'hôte SSH du routeur est vérifiée par rapport à cette empreinte. Laisser vide pour ignorer la vérification.",
   "settings.advanced.pfsense.note": "Nécessite le paquet REST API pfSense. Entrez la clé API et l'alias à gérer.",
   "settings.advanced.pfsense.install_link": "Installer le paquet REST API",
   "settings.advanced.pfsense.api_key_setup": "Configurer la clé API",

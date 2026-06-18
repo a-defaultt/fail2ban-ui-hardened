@@ -396,6 +396,8 @@
   "settings.advanced.mikrotik.password": "Contrasenya SSH",
   "settings.advanced.mikrotik.key": "Ruta de la Clau SSH (opcional)",
   "settings.advanced.mikrotik.list": "Nom de la Llista d'Adreces",
+  "settings.advanced.mikrotik.host_key": "Empremta de la clau d'amfitrió (opcional)",
+  "settings.advanced.mikrotik.host_key_hint": "Si s'estableix, la clau d'amfitrió SSH del router es verifica amb aquesta empremta. Deixeu-ho buit per ometre la verificació.",
   "settings.advanced.pfsense.note": "Requereix el paquet pfSense REST API. Introduïu la clau API i l'àlies per gestionar-ho.",
   "settings.advanced.pfsense.install_link": "Instal·la el Paquet REST API",
   "settings.advanced.pfsense.api_key_setup": "Configura la Clau API",
