@@ -40,11 +40,31 @@ function validateEmail(value) {
   return { valid: true };
 }
 
+// Validates a single DNS label without backtracking-prone regular expressions.
+function isValidHostnameLabel(label) {
+  if (label.length < 1 || label.length > 63) return false;
+  if (label[0] === '-' || label[label.length - 1] === '-') return false;
+  for (let i = 0; i < label.length; i++) {
+    const c = label[i];
+    const isAlnum = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    if (!isAlnum && c !== '-') return false;
+  }
+  return true;
+}
+
+// Linear-time hostname validation (avoids ReDoS from nested quantifiers).
+function isValidHostname(host) {
+  if (!host || host.length > 253) return false;
+  const labels = host.split('.');
+  for (let i = 0; i < labels.length; i++) {
+    if (!isValidHostnameLabel(labels[i])) return false;
+  }
+  return true;
+}
+
 function isValidIP(ip) {
   if (!ip || !ip.trim()) return false;
   ip = ip.trim();
-  // fail2ban accepts hostnames in addition to IPs
-  const hostnamePattern = /^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?)*$/;
   // IPv4 with optional CIDR
   const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/;
   // IPv6 with optional CIDR
@@ -73,7 +93,7 @@ function isValidIP(ip) {
     }
     return true;
   }
-  if (hostnamePattern.test(ip)) {
+  if (isValidHostname(ip)) {
     return true;
   }
   return false;
