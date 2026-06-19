@@ -4,7 +4,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://golang.org/)
 [![Platform](https://img.shields.io/badge/Platform-Linux-lightgrey)](https://www.linux.org/)
 
-Fail2Ban UI is a web interface for operating Fail2Ban across one or more Linux hosts. It provides a central place to review bans, search and unban IP addresses, manage jails and filters, and receive notifications.
+Fail2Ban UI is a management platform for operating Fail2Ban across one or more Linux hosts. It provides a central place to review bans, search and unban IP addresses, manage jails and filters, and receive notifications.
 
 The project is maintained by Swissmakers GmbH and released under GPL-3.0.
 
@@ -16,7 +16,7 @@ Fail2Ban UI does not replace Fail2Ban. Ban decisions are still made by the Fail2
 
 * A dashboard of active jails and recent ban/unban activity, updated in real time over WebSocket
 * A server manager for local, SSH-connected, and agent-connected Fail2Ban instances
-* Search, ban, and unban operations across all jails and servers
+* Centralized search, ban, and unban operations across all jails and servers
 * Remote jail and filter configuration management (depending on connector capabilities)
 * Filter debugging with live log-pattern testing
 * Ban insights, including country-level analytics on an interactive 3D globe
