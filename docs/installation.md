@@ -1,20 +1,17 @@
 # Installation
 
-This document provides a short installation path and points to the full deployment guides in the repository.
+This document describes the shortest path to a running instance and points to the full deployment guides in the repository.
 
 ## Supported platforms
 
-Fail2Ban UI targets Linux hosts. Typical environments include RHEL/Rocky/Alma, Debian/Ubuntu, and container environments in general.
+Fail2Ban UI targets Linux hosts. Typical environments are RHEL, Rocky Linux, AlmaLinux, Debian, Ubuntu, and container runtimes in general.
 
 ## Container deployment
 
-Additional resources:
-- Full guide: `deployment/container/README.md`
-- SELinux policies: `deployment/container/SELinux/`
-
 ### Option A: Pre-built image
 
-Local connector example (Fail2Ban runs on the same host):
+Run the image with the local connector (Fail2Ban on the same host):
+
 ```bash
 podman pull swissmakers/fail2ban-ui:latest
 
@@ -24,26 +21,26 @@ podman run -d --name fail2ban-ui --network=host \
   -v /var/run/fail2ban:/var/run/fail2ban \
   -v /var/log:/var/log:ro \
   swissmakers/fail2ban-ui:latest
-````
+```
 
-Notes:
+Notes on the mounts:
 
-* `/config` stores the SQLite DB, settings, and SSH keys used by the UI.
-* `/var/log` is used for log path tests and should be mounted read-only to the container.
+* `/config` stores the SQLite database, settings, and the SSH keys used by the UI.
+* `/var/log` is used for log path tests and should be mounted read-only.
 
-### Option B: Docker Compose
+### Option B: Compose
 
-Use one of the examples and adapt to your environment:
+Copy one of the examples and adapt it to your environment:
 
 ```bash
 cp docker-compose.example.yml docker-compose.yml
-# or
+# or, for Fail2Ban and the UI in one stack:
 cp docker-compose-allinone.example.yml docker-compose.yml
 
 podman compose up -d
 ```
 
-You can also run the development stacks under `development/` if you want to evaluate features first.
+The development stacks under `development/` are also a quick way to evaluate features before a real deployment.
 
 ### Option C: Build the image yourself
 
@@ -59,12 +56,12 @@ podman run -d --name fail2ban-ui --network=host \
   localhost/fail2ban-ui:dev
 ```
 
-## systemd deployment (standalone)
+### Additional resources
 
-Additional resources:
+* Full guide: [deployment/container/README.md](../deployment/container/README.md)
+* Optional SELinux modules for the container: [deployment/container/SELinux/](../deployment/container/SELinux/)
 
-* Full guide: `deployment/systemd/README.md`
-* SELinux and Fail2Ban -> UI HTTP callbacks: [`docs/security.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/security.md#selinux) (often `setsebool -P nis_enabled 1` on RHEL-family hosts)
+## systemd deployment (standalone binary)
 
 High-level procedure:
 
@@ -72,22 +69,21 @@ High-level procedure:
 git clone https://github.com/swissmakers/fail2ban-ui.git /opt/fail2ban-ui
 cd /opt/fail2ban-ui
 
-# Build static CSS assets
+# Build the static CSS assets
 ./build-tailwind.sh
 
 # Build the Go binary (embeds pkg/web/templates, pkg/web/locales, and pkg/web/static)
 go build -o fail2ban-ui ./cmd/server/main.go
 ```
 
-Then follow `deployment/systemd/README.md` to install the unit file and configure permissions.
+Then follow [deployment/systemd/README.md](../deployment/systemd/README.md) to install the unit file and configure permissions.
 
-## Production recommendation
+**Note:** On RHEL-family hosts with SELinux enforcing, the Fail2Ban-to-UI HTTP callbacks usually require `setsebool -P nis_enabled 1`. See [security.md](security.md#selinux).
 
-For production deployments:
+## Production recommendations
 
-- Enable OIDC if your environment supports centralized identity.
-- Keep the UI behind a reverse proxy (TLS termination + access controls).
-- Bind the UI to loopback (`BIND_ADDRESS=127.0.0.1`) when proxy and app share the host.
+* Enable OIDC if your environment supports centralized identity.
+* Keep the UI behind a reverse proxy for TLS termination and access control.
+* Bind the UI to loopback (`BIND_ADDRESS=127.0.0.1`) when the proxy and the application share a host.
 
-Reference: [`docs/reverse-proxy.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/reverse-proxy.md).
-
+See [reverse-proxy.md](reverse-proxy.md) for proxy configuration and [security.md](security.md) for the recommended deployment posture.

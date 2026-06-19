@@ -3,12 +3,11 @@
 ## UI not reachable
 
 Check:
-- Container/service is running
-- Host firewall allows the configured port
-- Reverse proxy forwards correctly (if used)
-- Firewalld port allowed?
 
-Examples:
+* The container or service is running.
+* The host firewall allows the configured port.
+* The reverse proxy forwards correctly, if one is used.
+
 ```bash
 podman ps
 podman logs fail2ban-ui
@@ -21,32 +20,30 @@ journalctl -u fail2ban-ui -f
 firewall-cmd --list-all
 firewall-cmd --add-port=8080/tcp --permanent
 firewall-cmd --reload
-````
+```
 
 ## Local connector fails
 
 Check:
 
-* The "jq" package is installed
-* Fail2Ban is running and socket exists
-* Container has the socket mounted
-* Permissions allow access to the socket
-* SELinux problems
-
-Examples:
+* The `jq` package is installed on the host.
+* Fail2Ban is running and the socket exists.
+* The container has the socket mounted.
+* Permissions allow access to the socket.
+* SELinux is not denying access.
 
 ```bash
-# check on RHEL / Rocky / Amlalinux
+# RHEL / Rocky / AlmaLinux:
 rpm -qa | grep jq
 
 systemctl status fail2ban
 ls -la /var/run/fail2ban/fail2ban.sock
 fail2ban-client status
 
-# check the socket in the container:
+# Check the socket from inside the container:
 podman exec -it fail2ban-ui ls -la /var/run/fail2ban/fail2ban.sock
 
-# SELinux check for alerts (needs "setroubleshoot" linux package):
+# SELinux denial analysis (requires the setroubleshoot package):
 sealert -a /var/log/audit/audit.log
 ```
 
@@ -54,19 +51,20 @@ sealert -a /var/log/audit/audit.log
 
 Check:
 
-* Key-based SSH works outside the UI
-* Service account exists and has required sudo / facl permissions
-* ACLs also allow modifications under `/etc/fail2ban`
-
-Examples:
+* Key-based SSH works outside the UI.
+* The service account exists and has the required sudo and ACL permissions.
+* The ACLs allow modifications under `/etc/fail2ban`.
 
 ```bash
 ssh -i ~/.ssh/<key> <user>@<host>
 sudo -l -U <user>
 getfacl /etc/fail2ban
 
-# Connect manually from the fail2ban-UI connector to the remote host: (this example uses the "development/ssh_and_local" dev stack)
-sudo podman exec -it fail2ban-ui ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -i /config/.ssh/id_rsa -p 2222 testuser@127.0.0.1
+# Connect manually from the Fail2Ban UI container to the remote host
+# (this example uses the development/ssh_and_local dev stack):
+sudo podman exec -it fail2ban-ui ssh -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/dev/null -o BatchMode=yes \
+  -i /config/.ssh/id_rsa -p 2222 testuser@127.0.0.1
 ```
 
 Recommended minimum sudoers for SSH connector accounts:
@@ -77,90 +75,87 @@ Recommended minimum sudoers for SSH connector accounts:
 <user> ALL=(ALL) NOPASSWD: /usr/bin/systemctl reload fail2ban
 ```
 
-Notes:
-- Fail2Ban UI executes the commands for fail2ban with `sudo` over SSH. Because of that the NOPASSWD option is very important.
+**Note:** Fail2Ban UI executes the Fail2Ban commands with `sudo` over SSH. The `NOPASSWD` option is therefore required.
 
+## Ban/unban notifications do not appear in the UI
 
-## Ban/unban notifications not showing up in the UI
-
-This is one of the most common issues. The UI receives ban/unban events from Fail2Ban via HTTP callbacks. If nothing appears in the dashboard or "Recent stored events", the callback chain is broken somewhere. Follow these steps systematically.
+This is one of the most common issues. The UI receives ban and unban events from Fail2Ban through HTTP callbacks. If nothing appears on the dashboard or under "Recent stored events", the callback chain is broken somewhere. Work through the following steps in order.
 
 ### Step 1: Verify the action file exists and is correct
 
-Fail2ban-UI creates a custom action file at `/etc/fail2ban/action.d/ui-custom-action.conf` on each managed host. This file contains `curl` commands that notify the UI when bans/unbans happen.
+Fail2Ban UI creates a custom action file at `/etc/fail2ban/action.d/ui-custom-action.conf` on each managed host. It contains the `curl` commands that notify the UI on bans and unbans.
 
 ```bash
-# Check if the action file exists:
 cat /etc/fail2ban/action.d/ui-custom-action.conf
 
-# You should see actionban and actionunban sections with curl commands pointing
-# to your Fail2ban-UI callback URL (e.g. http://10.88.0.1:8080/api/ban)
+# Expect actionban and actionunban sections with curl commands pointing
+# to your callback URL, for example http://10.88.0.1:8080/api/ban
 ```
 
-If the file does not exist or looks wrong, go to Settings → Manage Servers in the UI, select the server, and click "Test connection". The UI will re-deploy the action file automatically for local connectors.
+If the file does not exist or looks wrong, go to **Settings → Manage Servers** in the UI, select the server, and click **Test connection**. The UI re-deploys the action file automatically for local connectors.
 
 ### Step 2: Verify jail.local references the action
 
-Fail2ban-UI writes a `jail.local` that uses the custom action. Check that it is in place:
+Fail2Ban UI writes a `jail.local` that uses the custom action:
 
 ```bash
-cat /etc/fail2ban/jail.local | head -30
+head -30 /etc/fail2ban/jail.local
 
-# Look for the lines like:
-# action = %(action_mwlg)s
+# Look for lines such as:
+#   action = %(action_mwlg)s
 # and a definition of action_mwlg that references ui-custom-action
 ```
 
-If your `jail.local` was created manually or by another tool, the `ui-custom-action` might not be referenced. The easiest fix: let the UI manage `jail.local` by removing your manual version and restarting from the UI.
+If `jail.local` was created manually or by another tool, `ui-custom-action` might not be referenced. The simplest fix is to let the UI manage `jail.local`: remove the manual version and restart from the UI.
 
-### Step 3: Check network connectivity from Fail2Ban host to the UI
+### Step 3: Check connectivity from the Fail2Ban host to the UI
 
-The `curl` command in the action file must be able to reach the UI's callback URL. Test this from the Fail2Ban host (or from inside the container if Fail2Ban runs in one):
+The `curl` command in the action file must reach the callback URL. Test from the Fail2Ban host (or from inside its container, if Fail2Ban runs in one):
 
 ```bash
-# Replace with your actual Fail2ban-UI address:
+# Replace with your actual Fail2Ban UI address:
 curl -s -o /dev/null -w "%{http_code}" http://10.88.0.1:8080/api/version
 
 # Expected: 200
-# If you get connection refused, timeout, or another error,
-# fix network/firewall rules first.
+# On connection refused, timeout, or another error, fix network/firewall rules first.
 ```
 
-Common issues:
-- Container using bridge networking but callback URL points to `127.0.0.1` (use the host IP or `--network=host`)
-- Firewall on the UI host blocks the port
+Common causes:
+
+* A container on bridge networking with a callback URL pointing to `127.0.0.1`. Use the host IP, or `--network=host`.
+* A firewall on the UI host blocking the port.
 
 ### SELinux: callbacks blocked (`curl` denied)
 
-If bans work but events never reach the UI, and audit logs show SELinux denying `curl` in domain `fail2ban_t` when connecting to an HTTP or HTTPS port (for example `name_connect` to `http_port_t` on 443), the Fail2Ban action cannot reach the callback URL.
+If bans work but events never reach the UI, and the audit log shows SELinux denying `curl` in domain `fail2ban_t` when connecting to an HTTP or HTTPS port (for example `name_connect` to `http_port_t` on 443), the Fail2Ban action cannot reach the callback URL.
 
-On RHEL, Rocky, AlmaLinux, and similar:
+On RHEL, Rocky Linux, AlmaLinux, and similar:
 
 ```bash
 sudo setsebool -P nis_enabled 1
 ```
 
-Then trigger a test ban and check `audit.log` / `sealert` again. This is the same remedy `setroubleshoot` suggests for that denial pattern. If your policy team cannot use `nis_enabled`, they can craft an explicit allow rule; avoid turning SELinux off globally.
+Then trigger a test ban and check `audit.log` or `sealert` again. This is the same remedy that `setroubleshoot` suggests for this denial pattern. If your policy team cannot use `nis_enabled`, they can craft an explicit allow rule. Do not turn SELinux off globally.
 
 ### Step 4: Verify the callback secret
 
-Every callback must include the header `X-Callback-Secret`. The value must match what the UI expects. You can find the current secret in Settings → General Settings → Callback Secret (or check the container environment).
+Every callback must include the `X-Callback-Secret` header, and the value must match what the UI expects. The current secret is visible under **Settings → General Settings → Callback Secret** (with a show/hide toggle), or in the container environment.
 
 ```bash
-# Check what secret the action file uses:
+# Secret used by the action file:
 grep "X-Callback-Secret" /etc/fail2ban/action.d/ui-custom-action.conf
 
-# Compare with the UI's expected secret (from the settings page or env var)
+# Compare with the secret shown in the UI settings
 ```
 
-If they do not match, re-deploy the action file via "Test connection" from the UI, or manually update the secret in the action file and restart Fail2Ban.
+If they do not match, re-deploy the action file with **Test connection** from the UI, or update the secret in the action file manually and restart Fail2Ban.
 
 ### Step 5: Simulate a ban notification with curl
 
-This is the most direct way to test the full callback chain. Run this from any host that can reach the UI:
+This is the most direct way to test the full callback chain. Run it from any host that can reach the UI:
 
 ```bash
-FAIL2BAN_UI_HOST="your_fail2ban_host"
+FAIL2BAN_UI_HOST="your_fail2ban_ui_host"
 SECRET="your_secret"
 
 curl -v -X POST http://$FAIL2BAN_UI_HOST:8080/api/ban \
@@ -177,19 +172,21 @@ curl -v -X POST http://$FAIL2BAN_UI_HOST:8080/api/ban \
 ```
 
 Expected response:
+
 ```json
 {"message":"Ban notification processed successfully"}
 ```
 
-If it works, you should immediately see:
-- A new entry in "Recent stored events" on the dashboard
-- A real-time WebSocket update (the entry appears without refreshing)
+If it works, you should immediately see a new entry under "Recent stored events" on the dashboard, delivered as a real-time WebSocket update without refreshing.
 
 Common error responses:
-- `401 Unauthorized` with `"Callback secret not configured"` → Secret not set in UI settings
-- `401 Unauthorized` with `"Invalid callback secret"` → Secret mismatch
-- `400 Bad Request` with `"invalid IP"` → The IP address in the payload is malformed
-- `400 Bad Request` with `"Invalid request"` → JSON parsing failed (check `ip` and `jail` fields are present)
+
+| Response | Cause |
+|----------|-------|
+| `401` with `"Callback secret not configured"` | No secret set in the UI settings |
+| `401` with `"Invalid callback secret"` | Secret mismatch |
+| `400` with `"invalid IP"` | The IP address in the payload is malformed |
+| `400` with `"Invalid request"` | JSON parsing failed; check that `ip` and `jail` are present |
 
 To simulate an unban:
 
@@ -207,10 +204,10 @@ curl -v -X POST http://$FAIL2BAN_UI_HOST:8080/api/unban \
 
 ### Step 6: Check what Fail2Ban is actually sending
 
-If the curl test above works but real bans still don't show up, Fail2Ban itself might not be executing the action correctly. Check:
+If the curl test works but real bans still do not show up, Fail2Ban itself might not execute the action correctly:
 
 ```bash
-# Trigger a real ban (use a test jail or ban a test IP):
+# Trigger a real ban (use a test jail or a test IP):
 fail2ban-client set sshd banip 198.51.100.1
 
 # Watch the Fail2Ban log for errors:
@@ -221,24 +218,21 @@ tail -f /var/log/fail2ban.log
 #   WARNING ... Command ... failed
 ```
 
-You can also manually run the exact `curl` command from the action file to see what happens. Extract it from the action file and run it in your shell (replace the Fail2Ban variables like `<ip>`, `<name>`, etc. with real values):
+You can also run the exact `curl` command from the action file manually. Extract it and substitute the Fail2Ban variables (`<ip>`, `<name>`, and so on) with real values:
 
 ```bash
-# Extract and run the actionban command manually:
 grep -A5 "actionban" /etc/fail2ban/action.d/ui-custom-action.conf
-
-# Then execute the curl command with real values substituted.
-# This reveals whether jq is missing, curl has TLS issues, etc.
 ```
 
-Common issues at this stage:
-- **`jq` not installed**: The action file uses `jq` to build JSON. Install it: `dnf install jq` or `apt install jq`
-- **TLS certificate issues**: If the callback URL uses HTTPS with a self-signed cert, the action file needs the `-k` flag (Fail2ban-UI adds this automatically when the callback URL starts with `https://`)
-- **Fail2Ban not restarted**: After the action file is deployed, Fail2Ban must be restarted to pick up changes: `systemctl restart fail2ban`
+Running it in a shell reveals whether `jq` is missing, `curl` has TLS issues, and similar problems. Common causes at this stage:
 
-### Step 7: Check the Fail2ban-UI logs
+* **`jq` not installed.** The action file uses `jq` to build the JSON. Install it: `dnf install jq` or `apt install jq`.
+* **TLS certificate issues.** A callback URL with HTTPS and a self-signed certificate needs the `-k` flag. Fail2Ban UI adds it automatically when the callback URL starts with `https://`.
+* **Fail2Ban not restarted.** After the action file is deployed, Fail2Ban must be restarted to pick up the change: `systemctl restart fail2ban`.
 
-The UI logs every incoming callback with details. Check the container or service logs:
+### Step 7: Check the Fail2Ban UI logs
+
+The UI logs every incoming callback:
 
 ```bash
 # Container:
@@ -248,18 +242,18 @@ podman logs -f fail2ban-ui
 journalctl -u fail2ban-ui -f
 
 # Look for lines like:
-#   ✅ Parsed ban request - IP: ..., Jail: ...
-#   ⚠️ Invalid callback secret ...
-#   ❌ JSON parsing error ...
+#   Parsed ban request - IP: ..., Jail: ...
+#   Invalid callback secret ...
+#   JSON parsing error ...
 ```
 
-If you enabled debug mode in the UI settings, you will also see the raw JSON body of every incoming callback.
+With debug mode enabled in the UI settings, the raw JSON body of every incoming callback is logged as well.
 
-### Step 8: Verify the `serverId` resolves
+### Step 8: Verify that the serverId resolves
 
-The callback payload includes a `serverId`. The UI uses this to match the event to a configured server. If neither matches any known server, the UI will reject the callback.
+The callback payload includes a `serverId`, which the UI uses to match the event to a configured server. If it matches no known server, the callback is rejected.
 
-Check that the `serverId` in the action file matches the server ID shown in Settings → Manage Servers. You can see the configured server IDs via:
+Check that the `serverId` in the action file matches the server ID shown under **Settings → Manage Servers**:
 
 ```bash
 curl -s http://$FAIL2BAN_UI_HOST:8080/api/servers \
@@ -269,77 +263,75 @@ curl -s http://$FAIL2BAN_UI_HOST:8080/api/servers \
 ### Quick reference: end-to-end callback flow
 
 ```
-Fail2Ban detects intrusion
+Fail2Ban detects an intrusion
   → triggers actionban in ui-custom-action.conf
     → curl POST /api/ban with JSON payload + X-Callback-Secret header
-      → Fail2ban-UI validates secret
-        → Fail2ban-UI validates IP format
-          → Fail2ban-UI resolves server (by serverId)
-            → Stores event in SQLite (ban_events table)
-              → Broadcasts via WebSocket to all connected browsers
-                → Optional: dispatches alert (Email / Webhook / Elasticsearch)
-                  → Optional: evaluates advanced actions (recurring offenders)
+      → Fail2Ban UI validates the secret
+        → validates the IP format
+          → resolves the server (by serverId)
+            → stores the event in SQLite (ban_events)
+              → broadcasts over WebSocket to all connected browsers
+                → optional: dispatches an alert (Email / Webhook / Elasticsearch)
+                  → optional: evaluates advanced actions (recurring offenders)
 ```
 
-If any step fails, the chain stops and the event will not appear in the UI.
+If any step fails, the chain stops and the event does not appear in the UI.
 
+### Restored bans after a Fail2Ban service restart
 
-### Note for "restored bans" after a fail2ban service restart
-By default we set this to the generated ui-action file `/etc/fail2ban/action.d/ui-custom-action.conf`:
+The generated action file `/etc/fail2ban/action.d/ui-custom-action.conf` sets:
 
 ```ini
 norestored = 1
 ```
 
-With **`norestored = 1`**, Fail2Ban **skips** running `actionban` and **`actionunban`** for ban events that are marked as **restored**.
+With `norestored = 1`, Fail2Ban skips `actionban` and `actionunban` for ban events that are marked as *restored*. Why this is set, and what it means:
 
-Why is that set:
+* After a Fail2Ban service restart, previously active blocks are loaded back from the persistence storage. Those bans are treated as restored, not as fresh bans in the current process. This is intended behavior - re-running the actions would flood the UI and any connected log-management system with duplicate events.
+* As a consequence, if you unban one of those restored IPs, Fail2Ban does *not* execute `actionunban`. Fail2Ban UI never receives the `POST /api/unban`, so no unban toast and no new row under "Recent stored events" appears.
+* Bans created *after* the last restart, and unbanned *without* another restart in between, go through the normal action pipeline. For those, ban and unban callbacks behave as expected.
 
-- After the **Fail2Ban service restarts**, previously active blocks are loaded back from persistence storage. Those bans are treated as **restored** (not as a fresh ban in the current process -> this is wanted behavior, because we do not want to spam our logmanagement system).
-- But if you **unban** one of those restored IPs, Fail2Ban will **not** execute `actionunban`, so Fail2ban-UI **never** receives `POST /api/unban` so also no unban toast and no new row under **Recent stored events** will appear.
-- **New** bans that were created **after** the last restart of the restartet fail2ban service and are unbanned **without** another Fail2Ban restart in between will go through the normal action pipeline. -> So ban and unban callbacks behave here as expected.
-
-So the symptom "unban works but the UI only records unbans for *new* blocks" matches **`norestored = 1`** plus a restart between the original ban and the unban.
+The symptom "unban works, but the UI only records unbans for *new* blocks" therefore matches `norestored = 1` combined with a Fail2Ban restart between the original ban and the unban.
 
 ## Alert provider issues
 
-### Alerts not being sent (any provider)
+### Alerts not sent (any provider)
 
-1. Verify that alerts are enabled for the event type (ban and/or unban) in Settings → Alert Settings
-2. Check which alert provider is selected - check all your settings for the active provider again.
-3. Check country filtering: if specific countries are selected, only IPs geolocated to those countries trigger alerts. Set to `ALL` to alert on every event.
-4. Use the Fail2ban-UI logs + (with enabled Debug-logs) to confirm the alert dispatch:
+1. Verify that alerts are enabled for the event type (ban and/or unban) under **Settings → Alert Settings**.
+2. Check which alert provider is selected, and re-check all settings of the active provider.
+3. Check the country filter: if specific countries are selected, only IPs geolocated to those countries trigger alerts. Set it to `ALL` to alert on every event.
+4. Confirm the dispatch in the Fail2Ban UI logs (enable debug logging for more detail):
 
 ```bash
 podman logs -f fail2ban-ui
 
 # Successful email alert:
-#   📧 sendEmail: Successfully sent email to ...
+#   sendEmail: Successfully sent email to ...
 # Successful webhook:
-#   ✅ Webhook alert sent successfully
+#   Webhook alert sent successfully
 # Successful Elasticsearch:
-#   ✅ Elasticsearch alert indexed successfully
+#   Elasticsearch alert indexed successfully
 ```
 
-### Email alerts: test-email works but ban alerts don't arrive
+### Email: test email works, but ban alerts do not arrive
 
-This typically happens because the ban-alert message looks differently (having IPs, special characters and maybe also payloads in it) vs. the test emails, that won't trigger a Spam mechanism.
-Check:
+This typically happens because a real ban alert looks different from a test email - it contains IPs, special characters, and possibly attack payloads, which can trigger spam filtering. Check:
 
-- The Fail2ban-UI logs show "Successfully sent email" for the ban event. -> then you know the problem is not on fail2ban-UI
-- The email may be landing in spam. Check your spam/junk folder.
-- Some SMTP servers (especially Office365) are strict about what is allowed and what not. Fail2ban-UI uses `\r\n` line endings and includes `Message-ID` and `Date` headers for compliance. It should work like this, but it can be always disliked by Microsoft and maybe needs a whitelist in the companies spam-policy. Ensure also you are running the latest version.
+* The Fail2Ban UI logs show "Successfully sent email" for the ban event. If so, the problem is not on the Fail2Ban UI side.
+* The email may be landing in spam. Check the spam or junk folder.
+* Some SMTP servers, especially Office365, are strict about message formatting. Fail2Ban UI uses `\r\n` line endings and includes `Message-ID` and `Date` headers for compliance, but strict policies may still require a whitelist entry in the company's spam policy. Make sure you run the latest version.
 
 ### Webhook: HTTP 400 or connection errors
 
-Common issues:
+Common causes:
 
-- **ntfy returns 400 "topic invalid"**: ntfy requires the topic in the URL path (e.g. `https://ntfy.sh/fail2ban-alerts`), not just the base URL. When sending JSON payloads, the topic must either be in the URL path or in the JSON body as a `topic` field.
-- **Connection refused**: The webhook URL is unreachable from the Fail2ban-UI host. Test with curl from the same host/container.
-- **401/403**: The endpoint requires authentication. Add the appropriate header (e.g. `Authorization: Bearer <token>`) in the Custom Headers field.
-- **TLS certificate errors**: For self-signed endpoints, enable `Skip TLS Verification`
+* **ntfy returns 400 "topic invalid".** ntfy requires the topic in the URL path, for example `https://ntfy.sh/fail2ban-alerts`, not just the base URL. With JSON payloads, the topic must be either in the URL path or in the JSON body as a `topic` field.
+* **Connection refused.** The webhook URL is not reachable from the Fail2Ban UI host. Test with curl from the same host or container.
+* **401/403.** The endpoint requires authentication. Add the appropriate header in the Custom Headers field, for example `Authorization: Bearer <token>`.
+* **TLS certificate errors.** For self-signed endpoints, enable **Skip TLS Verification**.
 
-Test manually:
+Manual test:
+
 ```bash
 curl -v -X POST https://your-webhook-url \
   -H "Content-Type: application/json" \
@@ -348,14 +340,15 @@ curl -v -X POST https://your-webhook-url \
 
 ### Elasticsearch: connection or indexing failures
 
-Common issues:
+Common causes:
 
-- **Connection refused / timeout**: Verify the Elasticsearch URL is reachable from the Fail2ban-UI host
-- **401 Unauthorized**: API key or credentials are incorrect. Verify the API key in Kibana → Stack Management → API Keys
-- **403 Forbidden**: The API key lacks write permissions on the target index. Create a key with `write` and `create_index` privileges for `fail2ban-events-*`
-- **Index template missing**: Without an index template, Elasticsearch uses dynamic mapping which may produce suboptimal field types. Create the template as described in [`alert-providers.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/alert-providers.md)
+* **Connection refused / timeout.** Verify that the Elasticsearch URL is reachable from the Fail2Ban UI host.
+* **401 Unauthorized.** API key or credentials are incorrect. Verify the key in Kibana under **Stack Management → API Keys**.
+* **403 Forbidden.** The API key lacks write permissions on the target index. Create a key with `write` and `create_index` privileges for `fail2ban-events-*`.
+* **Index template missing.** Without a template, Elasticsearch uses dynamic mapping, which may produce suboptimal field types. Create the template as described in [alert-providers.md](alert-providers.md#elasticsearch-setup).
 
-Test manually:
+Manual test:
+
 ```bash
 curl -v -X POST "https://your-es-url/fail2ban-events-test/_doc" \
   -H "Content-Type: application/json" \
@@ -365,52 +358,47 @@ curl -v -X POST "https://your-es-url/fail2ban-events-test/_doc" \
 
 ### Switching providers
 
-When switching alert providers (e.g. from Email to Webhook):
+When switching alert providers, for example from Email to Webhook:
 
-1. The previous provider's settings are preserved in the database. Switching back restores them.
-2. Make sure to save settings after changing the provider.
+1. The previous provider's settings are preserved in the database; switching back restores them.
+2. Save the settings after changing the provider.
 3. Always use the test button for the new provider before relying on it for real events.
 
-## Bans fail due to firewall backend (nftables / firewalld)
+## Bans fail due to the firewall backend (nftables / firewalld)
 
-Symptoms often mention `iptables (nf_tables)` or action startup errors.
+Symptoms often mention `iptables (nf_tables)` or action startup errors. Use a banaction that matches the host's firewall backend:
 
-Fix:
-
-* Use Fail2Ban banactions matching your host firewall backend:
-
-  * firewalld (use on Rocky / Red Hat / Almalinux): `firewallcmd-rich-rules`, `firewallcmd-allports`
-  * nftables: `nftables-multiport`, `nftables-allports`
-  * legacy iptables: `iptables-multiport`, `iptables-allports`
+| Backend | Banaction | Banaction allports |
+|---------|-----------|--------------------|
+| firewalld (RHEL, Rocky Linux, AlmaLinux) | `firewallcmd-rich-rules` | `firewallcmd-allports` |
+| nftables | `nftables-multiport` | `nftables-allports` |
+| legacy iptables | `iptables-multiport` | `iptables-allports` |
 
 ## OIDC login problems
 
 Check:
 
-* Issuer URL is correct and reachable
-* Redirect URI matches exactly: `https://<host>/auth/callback`
-* Provider client configuration includes post-logout redirect to `https://<host>/auth/login`
-
-Logs:
+* The issuer URL is correct and reachable.
+* The redirect URI matches exactly: `https://<host>/auth/callback` (including any `BASE_PATH`).
+* The provider client configuration includes the post-logout redirect `https://<host>/auth/login`.
 
 ```bash
 podman logs fail2ban-ui
-# Also enable debug logging over env or over the webUI
+# Enable debug logging through the environment or the web UI for more detail.
 ```
 
 ## WebSocket not connecting
 
-If the real-time dashboard updates (ban/unban events appearing without page refresh) are not working:
+If real-time dashboard updates - ban and unban events appearing without a page refresh - do not work, check:
 
-Check:
+* The browser console for WebSocket errors (F12 → Console).
+* The WebSocket status indicator in the UI footer.
+* The reverse proxy, if one is used, supports WebSocket upgrades.
 
-* Browser console for WebSocket errors (F12 → Console tab)
-* The WebSocket status indicator in the UI footer
-* If using a reverse proxy, ensure it supports WebSocket upgrades
+Common causes:
 
-Common issues:
+* **Reverse proxy not forwarding WebSocket.** Nginx requires an explicit upgrade configuration:
 
-* **Reverse proxy not forwarding WebSocket**: Nginx requires explicit WebSocket upgrade configuration:
   ```nginx
   location /api/ws {
       proxy_pass http://127.0.0.1:8080;
@@ -422,37 +410,29 @@ Common issues:
   }
   ```
 
-* **Origin mismatch**: The WebSocket endpoint validates that the `Origin` header matches the `Host` header. If your reverse proxy rewrites the `Host` header but not the `Origin`, the connection will be rejected. Ensure both headers are consistent.
-
-* **OIDC session expired**: When OIDC is enabled, the WebSocket requires a valid session. If the session expires, the WebSocket connection will fail with a 302 redirect or 401 error. Re-login to the UI to fix this.
+* **Origin mismatch.** The WebSocket endpoint validates that the `Origin` header matches the `Host` header. If the reverse proxy rewrites `Host` but not `Origin`, the connection is rejected. Keep both headers consistent.
+* **OIDC session expired.** With OIDC enabled, the WebSocket requires a valid session. After expiry, the connection fails with a 302 redirect or a 401 error. Log in to the UI again.
 
 ## Database issues
 
 Check:
 
-* `/config` is writable by the container/service user
-* SQLite file permissions are correct
-
-Example:
+* `/config` is writable by the container or service user.
+* The SQLite file permissions are correct.
 
 ```bash
 ls -la /opt/fail2ban-ui
 sqlite3 /opt/fail2ban-ui/fail2ban-ui.db "PRAGMA integrity_check;"
 ```
 
-Expected output:
-
-- `ok` -> database is healthy
-- Any other output -> investigate filesystem errors and restore from backup if needed
+Expected output: `ok`. Any other output indicates a problem - investigate filesystem errors and restore from backup if needed.
 
 ## Reverse proxy checks
 
 If the UI loads but real-time updates fail:
 
-- Verify proxy forwards WebSocket upgrades to `/api/ws`
-- Ensure proxy preserves `Host` and does not create `Origin`/`Host` mismatches
-- Confirm TLS termination and backend route target are correct
+* Verify the proxy forwards WebSocket upgrades to `/api/ws`.
+* Ensure the proxy preserves `Host` and does not create an `Origin`/`Host` mismatch.
+* Confirm TLS termination and the backend route target are correct.
 
-Reference configurations:
-
-- [`docs/reverse-proxy.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/reverse-proxy.md)
+Reference configurations: [reverse-proxy.md](reverse-proxy.md).

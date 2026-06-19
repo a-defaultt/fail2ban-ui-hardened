@@ -1,171 +1,119 @@
-# Architecture overview
+# Architecture
 
-Fail2Ban UI consists of :
-- a Go HTTP API (Gin)
-- a single-template web frontend (with static assets)
-- an embedded SQLite database for state and event history
-- optional integrations (alert providers, GeoIP/Whois, firewall-integrations)
+Fail2Ban UI is a single Go binary that provides centralized management for one or more Fail2Ban instances. It does not replace Fail2Ban: every ban decision is still made by the Fail2Ban daemon on the individual host. The UI adds a management layer on top of it.
+
+The application consists of the following parts:
+
+- An HTTP API and embedded web frontend, served by a Gin HTTP server
+- A WebSocket hub for real-time event delivery to the browser
+- An embedded SQLite database for server definitions, settings, ban history, and permanent block records
+- A connector manager that talks to the managed Fail2Ban instances
+- Optional integrations: alert providers, GeoIP/Whois enrichment, and edge firewall actions
+
+Fail2Ban UI system architecture
+
+## Design principles
+
+- **Two independent paths.** Management commands flow from the UI to Fail2Ban (control path). Ban and unban events flow from Fail2Ban to the UI (event path). The two directions use different transports and different authentication (also varies per connector).
+- **No required inbound ports on managed hosts beyond what already exists.** The SSH connector reuses `sshd`. The agent connector exposes a single HTTP endpoint. The local connector uses the Fail2Ban Unix socket.
+- **Validate at the boundary.** Every IP address and CIDR received from the API or a callback is parsed with `net.ParseIP` / `net.ParseCIDR` before it reaches a shell command, an SSH session, or a firewall integration. Identifiers passed to integrations are sanitized.
+- **State lives in one place.** All persistent state is kept in the embedded SQLite database under the configuration directory. A backup of that directory is a complete backup of the UI.
+
+## Connectors
+
+A *connector* is the mechanism the UI uses to control a single Fail2Ban instance. Each managed server is configured with exactly one connector type. The connector is selected per request through the `X-F2B-Server` HTTP header.
+
+
+| Connector | Transport                                                                             | Typical use                                                                   | Requirements on the managed host                                                                                   |
+| --------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Local     | Unix socket and direct file access                                                    | Fail2Ban runs on the same host as the UI                                      | Read/write access to `/var/run/fail2ban/fail2ban.sock` and `/etc/fail2ban`; read access to the monitored log files |
+| SSH       | SSH with key-based authentication                                                     | Remote hosts where installing additional software is not wanted               | A dedicated service account with `sudo fail2ban-client `* and `sudo systemctl restart fail2ban`                    |
+| Agent     | HTTP to the [fail2ban-ui-agent](https://github.com/swissmakers/fail2ban-ui-agent) API | Environments where SSH access from the UI host is not desired or not possible | The agent service, with local access to the Fail2Ban socket and configuration                                      |
+
+
+All three connectors implement the same operations: reading the jail summary and banned IPs, banning and unbanning addresses, reading and writing jail and filter configuration, testing filters and log paths, creating and deleting jails, and restarting or reloading Fail2Ban.
+
+When a new server is added, the connector also installs the callback action (`ui-custom-action.conf`) into `action.d` on the managed host, so that the Event path works without manual configuration.
 
 ## Data flows
 
-1) User -> UI -> API
-- Browser communicates with the backend via HTTP and WebSocket.
-- When OIDC is enabled, most UI routes require authentication.
+### Control path -- Fail2Ban-UI to Fail2Ban
 
-2) Fail2Ban host -> UI callbacks
-- A custom Fail2Ban action posts ban/unban events to the UI.
-- The UI validates the callback secret, enriches (optional), stores, and broadcasts events.
+Management operations originate from the REST API and are executed by the connector assigned to the target server:
 
-3) UI -> Fail2Ban host (management operations)
-- Local: uses the Fail2Ban socket and local filesystem.
-- SSH: runs `fail2ban-client` and manages files via SSH.
-- Agent (preview): HTTP-based control plane (limited, in progress).
+- **Local** invokes `fail2ban-client` against the Unix socket and edits configuration files directly on the filesystem.
+- **SSH** opens a session as the configured service account and runs `sudo fail2ban-client`; configuration files are transferred over the same SSH connection.
+- **Agent** issues HTTP requests to the agent API (for example `POST /v1/jails/:jail/ban`); the agent performs the socket and file operations locally.
 
-## Components (high level)
+### Event path -- Fail2Ban to Fail2Ban-UI
 
-- REST API: server management, jail/filter config read/write, ban/unban actions, settings, data management (clear events/blocks)
-- WebSocket hub: streams real-time ban/unban events and (optional) debug console logs, protected by origin validation and session auth
-- Storage: server definitions, settings, ban history, permanent block records
-- Alert providers: pluggable notification dispatch (Email/SMTP, Webhook, Elasticsearch) with country-based filtering and GeoIP enrichment
-- Integrations: MikroTik (SSH), pfSense (REST API), OPNsense (REST API) with input validation on all parameters
-- Ban Insights: country-level analytics with interactive 3D threat globe visualization
-
-Additional resources:
-- Alert provider documentation: [`docs/alert-providers.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/alert-providers.md)
-- Threat intelligence documentation: [`docs/threat-intel.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/threat-intel.md)
-- Container deployment guide: [`deployment/container/README.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/deployment/container/README.md)
-- systemd setup guide: [`deployment/systemd/README.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/deployment/systemd/README.md)
-
-## More detailed diagrams
-
-#### Browser (Frontend) ↔ Backend (HTTP / WebSocket) communication
+Each managed Fail2Ban instance carries a custom action, `ui-custom-action.conf`, attached to its jails. On every ban and unban, the action sends an HTTP `POST` to the UI callback endpoint:
 
 ```
-┌───────────────────────────────────────────────────────────────────────────────────┐
-│  FRONTEND (Vanilla JS + Tailwind CSS)                                             │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐               │
-│  │  Dashboard  │  │ Filter Debug│  │   Settings  │  │  (index)    │               │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘               │
-│         └────────────────┴────────────────┴────────────────┘                      │
-│                                    │                                              │
-│  Communication to backend:         │  HTTP/HTTPS (REST)                           │
-│  • GET  /                          │  • All /api/* (except callbacks) use your    │
-│  • GET  /api/summary               │    session when OIDC is enabled              │
-│  • GET  /api/jails/:jail/banned    │  • X-F2B-Server header for server selection  │
-│  • GET  /api/events/bans           │  • X-F2B-Server header for server selection  │
-│  • GET  /api/version               │                                              │
-│  • POST /api/jails/:jail/unban/:ip │  WebSocket: GET /api/ws (upgrade)            │
-│  • POST /api/jails/:jail/ban/:ip   │  • Same origin, same cookies as HTTP         │◀-┐
-│  • POST /api/settings              │  • Receives: heartbeat, console_log,         │  │
-│  • … (see diagram 2)               │    ban_event, unban_event                    │  │
-└────────────────────────────────────┼──────────────────────────────────────────────┘  │ W
-                                     │                                                 │ e
-                                     ▼                                                 │ b
-┌─────────────────────────────────────────────────────────────────────────────────┐    │ s
-│  GO BACKEND (Gin)                                                               │    │ o
-│  ┌───────────────────────────────────────────────────────────────────────────┐  │    │ c
-│  │  PUBLIC (no OIDC-auth session needed for access):                         │  │    │ k
-│  │  • /auth/login | /auth/callback | /auth/logout                            │  │    │ e
-│  │  • /auth/status | /auth/user                                              │  │    │ t  
-│  │  • POST /api/ban | POST /api/unban ← Fail2ban callbacks (a valid Callback │  │    │
-│  │  • /static/* | /locales/*                               Secret is needed) │  │----┘
-│  └───────────────────────────────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────────────────────────┐  │
-│  │  PROTECTED (when OIDC enabled):                                           │  │
-│  │  GET / | all other /api/* | GET /api/ws (WebSocket, same-origin only)     │  │
-│  └───────────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────────┘
+POST <callback-url>/api/ban     (or /api/unban)
+X-Callback-Secret: <configured secret>
+Content-Type: application/json
+
+{ "serverId": "...", "ip": "...", "jail": "...", "hostname": "...", "failures": ..., "logs": [...] }
 ```
 
-#### Backend internals: API routes, WebSocket hub, storage, connectors
+The backend processes each callback in the following order:
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│  GIN SERVER                                                                      │
-│  ┌────────────────────────────────────────────────────────────────────────────┐  │
-│  │  REST API (group /api)                                                     │  │
-│  │  • GET  /summary              → Connector(s) → Fail2ban(jails, counters)   │  │
-│  │  • GET  /jails/:jail/banned   → Connector   → Fail2ban(banned IP lists)    │  │
-│  │  • GET  /jails/:jail/config   • POST /jails/:jail/config                   │  │
-│  │  • GET  /jails/manage         • POST /jails/manage | POST /jails           │  │
-│  │  • POST /jails/:jail/unban/:ip  • POST /jails/:jail/ban/:ip                │  │
-│  │  • GET  /settings             • POST /settings                             │  │
-│  │  • GET  /events/bans          • GET /events/bans/stats | /insights         │  │
-│  │  • DELETE /events/bans        • DELETE /advanced-actions/blocks            │  │
-│  │  • GET  /version              (optional GitHub request if UPDATE_CHECK)    │  │
-│  │  • GET  /servers | POST/DELETE /servers | POST /servers/:id/test           │  │
-│  │  • GET  /filters/*            • POST /filters/test | POST/DELETE /filters  │  │
-│  │  • POST /fail2ban/restart     • GET/POST /advanced-actions/*               │  │
-│  │  • POST /ban  (callback)      • POST /unban (callback)                     │  │
-│  │  All IP inputs validated via net.ParseIP / net.ParseCIDR                   │  │
-│  └────────────────────────────────────────────────────────────────────────────┘  │
-│                                    │                                             │
-│  ┌─────────────────────────────────┴──────────────────────────────────────────┐  │
-│  │  WebSocket Hub (GET /api/ws — same-origin, auth required with OIDC)        │  │
-│  │  • register / unregister clients                                           │  │
-│  │  • Origin header validated against Host (rejects cross-site connections)   │  │
-│  │  • broadcast to all clients:                                               │  │
-│  │    - type: "heartbeat"   (every ~30s)                                      │  │
-│  │    - type: "console_log" (debug console lines)                             │  │
-│  │    - type: "ban_event"   (after POST /api/ban → store → broadcast)         │  │
-│  │    - type: "unban_event" (after POST /api/unban → store → broadcast)       │  │
-│  └────────────────────────────────────────────────────────────────────────────┘  │
-│  ┌────────────────────────────┐  ┌────────────────────────────┐                  │
-│  │  SQLite Storage            │  │  Whois / GeoIP             │                  │
-│  │  • ban_events              │  │  • IP → country/hostname   │                  │
-│  │  • app_settings, servers   │  │    MaxMind or ip-api.com   │                  │
-│  │  • permanent_blocks        │  │  • Used in UI and alerts   │                  │
-│  └────────────────────────────┘  └────────────────────────────┘                  │
-│  ┌────────────────────────────┐  ┌────────────────────────────┐                  │
-│  │  Connector Manager         │  │  Integrations + Alerts     │                  │
-│  │  • Local (fail2ban.sock)   │  │  • Mikrotik / pfSense /    │                  │
-│  │  • SSH (exec on remote)    │  │    OPNsense (block/unblock)│                  │
-│  │  • Agent (HTTP to agent)   │  │  • Input validated (IP +   │                  │
-│  │  • New server init: ensure │  │    identifiers sanitized)  │                  │
-│  │                             │  │  • Alert dispatch (Email / │                  │
-│  │                             │  │    Webhook / Elasticsearch)│                  │
-│  │                             │  └────────────────────────────┘                  │
-│  │    action.d (ui-custom-    │                                                  │
-│  │    action.conf)            │                                                  │
-│  └────────────────────────────┘                                                  │
-└──────────────────────────────────────────────────────────────────────────────────┘
-```
+1. Validate the `X-Callback-Secret` header. Requests with a missing or invalid secret are rejected with `401` and are not processed further.
+2. Resolve the originating server from `serverId` or, as a fallback, the reported hostname.
+3. Validate the IP address and enrich the event with GeoIP and Whois data, if enrichment is enabled.
+4. Store the event in the `ban_events` table.
+5. Broadcast the event (`ban_event` or `unban_event`) to all connected WebSocket clients.
+6. Dispatch alerts to the configured providers, subject to the per-event and country filters.
+7. Evaluate advanced ban actions. If a recurring-offender threshold is reached, the address is pushed as a permanent block to the configured edge firewall (MikroTik, pfSense, or OPNsense) and recorded in `permanent_blocks`.
+8. Return `200 OK`.
 
-#### Fail2ban instances → Fail2ban-UI (callbacks) and Fail2ban-UI → Fail2ban (via connectors)
+**Note:** The callback endpoints (`/api/ban`, `/api/unban`) are intentionally reachable without an OIDC session, because they are called by machines, not by users. They are protected exclusively by the callback secret. Treat the secret like a credential and only transport callbacks over TLS or a trusted network.
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│  FAIL2BAN INSTANCES (one per server: local, SSH host, or agent host)             │
-│  On each host: Fail2ban + action script (ui-custom-action.conf)                  │
-│  On ban/unban → action runs → HTTP POST to Fail2ban-UI callback URL              │
-│                                                                                  │
-│         ┌───────────────────────────────────────────────────────────────┐        │
-│         │  Outbound to Fail2ban-UI (from each Fail2ban host)            │        │
-│         │  POST <CallbackURL>/api/ban   or   /api/unban                 │        │
-│         │  Header: X-Callback-Secret: <configured secret>               │        │
-│         │  Body: JSON { serverId, ip, jail, hostname, failures, logs }  │        │
-│         └───────────────────────────────────────────────────────────────┘        │
-│                                    │                                             │
-│                                    ▼                                             │
-│  ┌────────────────────────────────────────────────────────────────────────────┐  │
-│  │  Fail2ban-UI Backend                                                       │  │
-│  │  1. Validate X-Callback-Secret → 401 if missing/invalid                    │  │
-│  │  2. Resolve server (serverId or hostname)                                  │  │
-│  │  3. Whois/GeoIP enrichment                                                 │  │
-│  │  4. Store event in SQLite DB (ban_events) if nothing was invalid           │  │
-│  │  5. Broadcast current event to WebSocket clients (ban_event / unban_event) │  │
-│  │  6. Optional: dispatch alert (Email / Webhook / Elasticsearch)             │  │
-│  │  7  Run additional actions (e.g. block on pfSense for recurring offenders) │  │
-│  │  8. Respond status 200 OK - if all above was without an error              │  │
-│  └────────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────────────────┘
+### Browser to Fail2Ban-UI
 
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│  INBOUND from Fail2ban-UI to Fail2ban (per connector type)                      │
-│  • Local:  fail2ban-client over Unix socket (/var/run/fail2ban/fail2ban.sock)   │
-│  • SSH:   SSH + fail2ban-client on remote host                                  │
-│  • Agent: HTTP to agent API (e.g. /v1/jails/:jail/unban, /v1/jails/:jail/ban)   │
-│  Used for: summary (jails, banned IPs), unban/ban from UI, config read/write,   │
-│            filter test, jail create/delete, restart/reload, logpath test        │
-└─────────────────────────────────────────────────────────────────────────────────┘
-```
+The browser communicates with the backend over HTTPS (REST) and a WebSocket connection (`GET /api/ws`):
+
+- When OIDC is enabled, the index page, all `/api/`* routes except the callbacks, and the WebSocket upgrade require an authenticated session. The login flow (`/auth/login`, `/auth/callback`, `/auth/logout`, `/auth/status`, `/auth/user`) and static assets remain public.
+- The WebSocket hub validates the `Origin` header against the request `Host` and rejects cross-site connections. Connected clients receive `heartbeat` (about every 30 seconds), `console_log` (debug console), `ban_event`, and `unban_event` messages.
+
+## Backend components
+
+
+| Component             | Responsibility                                                                                                                                                                    |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| REST API (`/api`)     | Server management, jail and filter configuration, ban/unban actions, settings, event queries and insights, data management (clearing events and blocks), version and update check |
+| WebSocket hub         | Client registration, origin validation, broadcast of heartbeat, console, and ban/unban messages                                                                                   |
+| SQLite storage        | `ban_events`, `app_settings`, `servers`, `permanent_blocks`                                                                                                                       |
+| Connector manager     | One connector instance per configured server; installs the callback action on new servers                                                                                         |
+| Alert dispatcher      | Pluggable providers: Email (SMTP), Webhook, Elasticsearch; per-event toggles and country-based filtering                                                                          |
+| GeoIP / Whois         | IP-to-country and hostname resolution through MaxMind databases or ip-api.com; used in the UI, in alerts, and in ban insights                                                     |
+| Firewall integrations | MikroTik over SSH, pfSense and OPNsense over their REST APIs; all parameters validated before dispatch                                                                            |
+
+
+## Network requirements
+
+
+| Path                      | Protocol / port                                                  | Direction        | Authentication                     |
+| ------------------------- | ---------------------------------------------------------------- | ---------------- | ---------------------------------- |
+| Browser → Fail2ban-UI             | HTTPS / WSS, port 8080 by default (place behind a reverse proxy) | inbound to Fail2ban-UI    | OIDC session (optional)            |
+| Fail2ban-UI → SSH-connected host   | SSH, port 22                                                     | outbound from Fail2ban-UI | SSH key, dedicated service account |
+| Fail2ban-UI → agent-connected host | HTTP(S), agent port                                              | outbound from Fail2ban-UI | Agent token                        |
+| Fail2Ban host → Fail2ban-UI        | HTTP(S) `POST /api/ban`, `/api/unban`                            | inbound to Fail2ban-UI    | `X-Callback-Secret` header         |
+| Fail2ban-UI → alert providers      | SMTP / HTTPS / Elasticsearch API                                 | outbound from Fail2ban-UI | Provider-specific                  |
+| Fail2ban-UI → edge firewall        | SSH (MikroTik) or HTTPS (pfSense, OPNsense)                      | outbound from Fail2ban-UI | Device credentials / API token     |
+
+
+**Important:** Do not expose the Fail2ban-UI directly to the public Internet. Place it behind a reverse proxy, VPN, or firewall rules, and enable OIDC where possible. The callback endpoint is the only path that managed hosts must be able to reach.
+
+## Additional resources
+
+- [Installation](installation.md)
+- [Configuration reference](configuration.md) - environment variables, callback URL and secret, OIDC
+- [Reverse proxy guide](reverse-proxy.md) - production proxy examples and WebSocket requirements
+- [Security guidance](security.md) - deployment posture, SELinux notes
+- [Alert providers](alert-providers.md)
+- [Threat intelligence](threat-intel.md)
+- [API reference](api.md)
+- Deployment guides: [container](../deployment/container/README.md), [systemd](../deployment/systemd/README.md)
+- Remote agent: [fail2ban-ui-agent](https://github.com/swissmakers/fail2ban-ui-agent)
