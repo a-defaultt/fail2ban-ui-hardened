@@ -1,14 +1,13 @@
 # Configuration reference
 
-This document describes common runtime settings and related operational behavior. Most runtime options are configured in the UI and stored in the database. Environment variables override behavior where applicable.
+This document describes the runtime settings and related operational behavior. Most options are configured in the UI and stored in the database; environment variables override behavior where applicable.
 
 ## Network and listener settings
 
-- `PORT`  
-  HTTP listen port. Default: `8080`.
-- `BIND_ADDRESS`  
-  Listen address. Default: `0.0.0.0`.  
-  Recommended with local reverse proxy: `127.0.0.1`.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8080` | HTTP listen port |
+| `BIND_ADDRESS` | `0.0.0.0` | Listen address. Use `127.0.0.1` when a local reverse proxy fronts the UI. |
 
 Example:
 
@@ -16,39 +15,38 @@ Example:
 -e PORT=3080 -e BIND_ADDRESS=127.0.0.1
 ```
 
-For production reverse proxy patterns, see [`docs/reverse-proxy.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/reverse-proxy.md).
+For production reverse proxy patterns, see [reverse-proxy.md](reverse-proxy.md).
 
-## HTTP base path (for subpath deployment)
+## HTTP base path (subpath deployment)
 
-- `BASE_PATH`
-  Optional URL path prefix where the application is served (environment-only, not configurable in the UI).
-  Examples: unset or empty = `/`; if set to `/myf2b`, UI, static files, API, WebSocket, and OIDC routes will be reachable under `https://host/myf2b/...`.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BASE_PATH` | unset (`/`) | Optional URL path prefix under which the application is served. Environment-only; not configurable in the UI. |
+
+With `BASE_PATH=/myf2b`, the UI, static files, API, WebSocket, and OIDC routes are reachable under `https://host/myf2b/...`.
 
 Rules:
 
-- Use a single leading slash and no trailing slash (e.g. `/myf2b`, not `myf2b/`).
-- When set, the app is served under that prefix. Visiting `/` redirects to `{BASE_PATH}/`, and non-prefixed paths are not served.
-- The reverse proxy must forward requests **with this path prefix** to Fail2Ban UI (see [`docs/reverse-proxy.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/reverse-proxy.md)).
+* Use a single leading slash and no trailing slash: `/myf2b`, not `myf2b/`.
+* When set, the application is served only under that prefix. Visiting `/` redirects to `{BASE_PATH}/`; non-prefixed paths are not served.
+* The reverse proxy must forward requests *with* the path prefix to Fail2Ban UI. See [reverse-proxy.md](reverse-proxy.md).
 
-When `BASE_PATH` is set, you must align related URLs:
+When `BASE_PATH` is set, align the related URLs:
 
-- **`CALLBACK_URL`**: public base including the path, e.g. `https://fail2ban.example.com/myf2b` (no trailing slash).
-- **`OIDC_REDIRECT_URL`**: must include the path, e.g. `https://fail2ban.example.com/myf2b/auth/callback`.
+* `CALLBACK_URL` must include the prefix, for example `https://fail2ban.example.com/myf2b` (no trailing slash).
+* `OIDC_REDIRECT_URL` must include the prefix, for example `https://fail2ban.example.com/myf2b/auth/callback`.
 
-## Callback URL and secret (Fail2Ban -> UI)
+## Callback URL and secret (Fail2Ban to Fail2ban-UI)
 
-Fail2Ban UI receives ban/unban callbacks at:
+Fail2Ban UI receives ban and unban callbacks at:
 
-- `POST {BASE_PATH}/api/ban` (or `POST /api/ban` as default)
-- `POST {BASE_PATH}/api/unban` (or `POST /api/unban` as default)
+* `POST {BASE_PATH}/api/ban` (`POST /api/ban` by default)
+* `POST {BASE_PATH}/api/unban` (`POST /api/unban` by default)
 
-Required environment variables:
-
-- `CALLBACK_URL`  
-  URL reachable from managed Fail2Ban hosts (scheme + host + optional port + **`BASE_PATH`** if used). No trailing slash.
-- `CALLBACK_SECRET`  
-  Shared secret validated via `X-Callback-Secret` header.  
-  If not set, Fail2Ban UI generates a secret on first start.
+| Variable | Description |
+|----------|-------------|
+| `CALLBACK_URL` | URL reachable from every managed Fail2Ban host: scheme, host, optional port, and `BASE_PATH` if used. No trailing slash. |
+| `CALLBACK_SECRET` | Shared secret validated through the `X-Callback-Secret` header. If unset, Fail2Ban UI generates one on first start. |
 
 Example:
 
@@ -67,84 +65,83 @@ With a subpath:
 
 ## Privacy and telemetry controls
 
-- `DISABLE_EXTERNAL_IP_LOOKUP=true`  
-  Disables external public-IP lookup used in UI display.
-- `UPDATE_CHECK=false`  
-  Disables GitHub release update checks.
+| Variable | Description |
+|----------|-------------|
+| `DISABLE_EXTERNAL_IP_LOOKUP=true` | Disables the external public-IP lookup used for display in the UI |
+| `UPDATE_CHECK=false` | Disables the GitHub release update check |
 
 ## UI behavior flags
 
-- `AUTODARK=false` (default)  
-  Enables automatic dark mode based on browser/OS preference only when `true`.  
-  Default behavior remains light mode.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUTODARK` | `false` | When `true`, enables automatic dark mode based on the browser or OS preference. The default remains light mode. |
 
 ## Fail2Ban configuration migration
 
-- `JAIL_AUTOMIGRATION=true`  
-  EXPERIMENTAL migration from monolithic `jail.local` to `jail.d/*.local`.  
-  Recommended: migrate manually on production systems.
+| Variable | Description |
+|----------|-------------|
+| `JAIL_AUTOMIGRATION=true` | Experimental migration from a monolithic `jail.local` to `jail.d/*.local`. On production systems, migrate manually instead. |
 
 ## Alert settings (UI-managed)
 
-Configure in **Settings -> Alert Settings**:
+Configure under **Settings → Alert Settings**:
 
-- Provider: `email` | `webhook` | `elasticsearch`
-- Enable alerts for bans/unbans
-- Alert country filters
-- GeoIP provider and log-line limits
+* Provider: `email`, `webhook`, or `elasticsearch`
+* Enable alerts for bans and/or unbans
+* Alert country filters
+* GeoIP provider and log-line limits
 
-Detailed provider behavior and payloads:
-
-- [`docs/alert-providers.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/alert-providers.md)
-- [`docs/webhooks.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/webhooks.md)
+For provider behavior and payloads, see [alert-providers.md](alert-providers.md) and [webhooks.md](webhooks.md).
 
 ## Threat intelligence settings (UI-managed)
 
-Configure in **Settings -> Alert Settings**:
+Configure under **Settings → Alert Settings**:
 
-- `threatIntel.provider`: `none` | `alienvault` | `abuseipdb`
-- `threatIntel.alienVaultApiKey` (for `alienvault`)
-- `threatIntel.abuseIpDbApiKey` (for `abuseipdb`)
+* `threatIntel.provider`: `none`, `alienvault`, or `abuseipdb`
+* `threatIntel.alienVaultApiKey` (for `alienvault`)
+* `threatIntel.abuseIpDbApiKey` (for `abuseipdb`)
 
-Runtime notes:
+Runtime behavior:
 
-- Queries are executed server-side via `GET /api/threat-intel/:ip`
-- Successful responses are cached for 30 minutes (provider+IP)
-- Upstream `429` triggers retry-window/backoff with stale-cache fallback
+* Queries run server-side through `GET /api/threat-intel/:ip`.
+* Successful responses are cached for 30 minutes per provider and IP.
+* An upstream `429` triggers a retry window with backoff and stale-cache fallback.
 
-See [`docs/threat-intel.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/threat-intel.md) for full details.
+See [threat-intel.md](threat-intel.md) for details.
 
 ## OIDC authentication
 
-Required when enabled:
+Required when OIDC is enabled:
 
-- `OIDC_ENABLED=true`
-- `OIDC_PROVIDER=keycloak|authentik|pocketid`
-- `OIDC_ISSUER_URL=...`
-- `OIDC_CLIENT_ID=...`
-- `OIDC_CLIENT_SECRET=...`
-- `OIDC_REDIRECT_URL=https://<ui-host>{BASE_PATH}/auth/callback`
-  Example with `BASE_PATH=/myf2b`: `https://<ui-host>/myf2b/auth/callback`
+| Variable | Description |
+|----------|-------------|
+| `OIDC_ENABLED=true` | Enables OIDC authentication |
+| `OIDC_PROVIDER` | `keycloak`, `authentik`, or `pocketid` |
+| `OIDC_ISSUER_URL` | Issuer URL; must match the provider's discovery document |
+| `OIDC_CLIENT_ID` | Client ID configured at the provider |
+| `OIDC_CLIENT_SECRET` | Client secret |
+| `OIDC_REDIRECT_URL` | `https://<ui-host>{BASE_PATH}/auth/callback`, for example `https://<ui-host>/myf2b/auth/callback` with `BASE_PATH=/myf2b` |
 
 Common optional variables:
 
-- `OIDC_SCOPES=openid,profile,email`
-- `OIDC_SESSION_SECRET=<32+ bytes recommended>`
-- `OIDC_SESSION_MAX_AGE=3600`
-- `OIDC_USERNAME_CLAIM=preferred_username`
-- `OIDC_SKIP_VERIFY=false` (development only)
-- `OIDC_SKIP_LOGINPAGE=false`
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OIDC_SCOPES` | `openid,profile,email` | Requested scopes, comma-separated |
+| `OIDC_SESSION_SECRET` | auto-generated | Session signing secret; 32 or more bytes recommended |
+| `OIDC_SESSION_MAX_AGE` | `3600` | Session lifetime in seconds |
+| `OIDC_USERNAME_CLAIM` | `preferred_username` | Claim used as the display username |
+| `OIDC_SKIP_VERIFY` | `false` | Skips TLS verification toward the provider. Development only. |
+| `OIDC_SKIP_LOGINPAGE` | `false` | Skips the UI login page and redirects to the provider directly |
 
 Provider notes:
 
-- Keycloak: allow redirect URI `{BASE_PATH}/auth/callback` (or `/auth/callback` at root) and post-logout redirect `{BASE_PATH}/auth/login`
-- Authentik/Pocket-ID: redirect URI must match exactly (including any `BASE_PATH` prefix)
+* **Keycloak**: allow the redirect URI `{BASE_PATH}/auth/callback` (or `/auth/callback` at root) and the post-logout redirect `{BASE_PATH}/auth/login`.
+* **Authentik / Pocket-ID**: the redirect URI must match exactly, including any `BASE_PATH` prefix.
 
-Related:
-
-- OIDC dev stack: `development/oidc/README.md`
+A ready-to-run OIDC test environment is available under [development/oidc/README.md](../development/oidc/README.md).
 
 ## Email template style
 
-- `emailStyle=classic`  
-  Uses the classic email template instead of the default modern template (Email provider only).
+| Variable | Description |
+|----------|-------------|
+| `emailStyle=classic` | Uses the classic email template instead of the default modern template (Email provider only) |

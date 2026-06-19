@@ -1,44 +1,67 @@
-# SSH and Local Fail2ban Development Setup
+# SSH, local, and agent development stack
 
-This setup provides a complete testing environment for Fail2ban UI with:
-- **Local Fail2ban instance** (container) -> for testing local connector
-- **Remote Fail2ban instance via SSH** (container) -> for testing SSH connector
-- **Fail2ban + fail2ban-ui-agent** (container) -> for testing the HTTP agent connector
+This stack provides a complete test environment covering all three connector types:
+
+- a **local Fail2Ban instance** (container) for the local connector,
+- a **remote Fail2Ban instance over SSH** (container) for the SSH connector,
+- **Fail2Ban plus fail2ban-ui-agent** (container) for the HTTP agent connector.
+
+**Warning:** This setup is for development only. See [Production considerations](#production-considerations).
 
 ## Services
 
-### 1. Fail2ban-Local
-- **Container:** `DEV_fail2ban-local`
-- **Purpose:** Local Fail2ban instance for testing local connector
-- **Network:** `host` mode (for iptables access)
-- **Config:** `./fail2ban-config-local/`
-- **Socket:** `./f2b-run-local/`
+### Fail2ban-Local
 
-### 2. Fail2ban-SSH
-- **Container:** `DEV_fail2ban-ssh`
-- **Purpose:** Remote Fail2ban instance accessible via SSH
-- **Network:** Bridge mode
-- **SSH Port:** `2222` (mapped from container port 22)
-- **SSH User:** `testuser`
-- **SSH Key:** Auto-generated in `./ssh-keys/`
-- **Config:** `./fail2ban-config-ssh/`
 
-### 3. Fail2ban-Agent
-- **Container:** `DEV_fail2ban-agent`
-- **Purpose:** Fail2ban plus **fail2ban-ui-agent** (HTTP API) on port **9700** (no SSH), for testing the agent connector
-- **Image:** Prebuilt [`swissmakers/fail2ban-ui-agent`](https://hub.docker.com/r/swissmakers/fail2ban-ui-agent) (LinuxServer Fail2ban base with the agent baked in). Sources live in a separate repository: [`github.com/swissmakers/fail2ban-ui-agent`](https://github.com/swissmakers/fail2ban-ui-agent).
-- **Network:** Bridge; publish `9700:9700`
-- **Config:** `./fail2ban-config-agent/` (created on first start)
+| Property  | Value                                           |
+| --------- | ----------------------------------------------- |
+| Container | `DEV_fail2ban-local`                            |
+| Purpose   | Local Fail2Ban instance for the local connector |
+| Network   | `host` mode, for iptables access                |
+| Config    | `./fail2ban-config-local/`                      |
+| Socket    | `./f2b-run-local/`                              |
 
-### 4. Fail2ban-UI
-- **Container:** `DEV_fail2ban-ui`
-- **Port:** `3080`
-- **URL:** `http://172.16.10.18:3080` (or configured BIND_ADDRESS)
-- **Purpose:** Main application for managing both Fail2ban instances
 
-## Setup Instructions
+### Fail2ban-SSH
 
-### 1. Build the Fail2ban-UI Image
+
+| Property  | Value                                       |
+| --------- | ------------------------------------------- |
+| Container | `DEV_fail2ban-ssh`                          |
+| Purpose   | Remote Fail2Ban instance reachable over SSH |
+| Network   | bridge mode                                 |
+| SSH port  | `2222` (mapped from container port 22)      |
+| SSH user  | `testuser`                                  |
+| SSH key   | auto-generated in `./ssh-keys/`             |
+| Config    | `./fail2ban-config-ssh/`                    |
+
+
+### Fail2ban-Agent
+
+
+| Property  | Value                                                                                                                                                                                                                                                            |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Container | `DEV_fail2ban-agent`                                                                                                                                                                                                                                             |
+| Purpose   | Fail2Ban plus **fail2ban-ui-agent** (HTTP API) on port **9700**, no SSH; tests the agent connector                                                                                                                                                               |
+| Image     | Prebuilt `[swissmakers/fail2ban-ui-agent](https://hub.docker.com/r/swissmakers/fail2ban-ui-agent)`, the LinuxServer Fail2Ban base with the agent baked in. Sources: [github.com/swissmakers/fail2ban-ui-agent](https://github.com/swissmakers/fail2ban-ui-agent) |
+| Network   | bridge; publishes `9700:9700`                                                                                                                                                                                                                                    |
+| Config    | `./fail2ban-config-agent/` (created on first start)                                                                                                                                                                                                              |
+
+
+### Fail2ban-UI
+
+
+| Property  | Value                                                         |
+| --------- | ------------------------------------------------------------- |
+| Container | `DEV_fail2ban-ui`                                             |
+| Port      | `3080`                                                        |
+| URL       | `http://172.16.10.18:3080`, or your configured `BIND_ADDRESS` |
+| Purpose   | The application under test, managing all three instances      |
+
+
+## Setup
+
+### 1. Build the Fail2Ban UI image
 
 ```bash
 cd /opt/fail2ban-ui
@@ -49,7 +72,7 @@ docker build -t localhost/fail2ban-ui:dev .
 
 ### 1b. fail2ban-ui-agent image (optional)
 
-Compose pulls **`swissmakers/fail2ban-ui-agent:latest`** by default. To refresh manually:
+Compose pulls `swissmakers/fail2ban-ui-agent:latest` by default. To refresh manually:
 
 ```bash
 podman pull swissmakers/fail2ban-ui-agent:latest
@@ -57,9 +80,9 @@ podman pull swissmakers/fail2ban-ui-agent:latest
 docker pull swissmakers/fail2ban-ui-agent:latest
 ```
 
-**Developing the agent itself:** clone [`fail2ban-ui-agent`](https://github.com/swissmakers/fail2ban-ui-agent), build the image or a static binary per that repo’s README, then either run that image or use the **optional** bind-mount + custom-init lines in `container-compose.yml` (commented) to replace the binary inside the dev container.
+To develop the agent itself: clone [fail2ban-ui-agent](https://github.com/swissmakers/fail2ban-ui-agent), build the image or a static binary per that repository's README, then either run that image or use the optional bind-mount and custom-init lines in `container-compose.yml` (commented out) to replace the binary inside the dev container.
 
-### 2. Start the Services
+### 2. Start the services
 
 ```bash
 cd /opt/fail2ban-ui/development/ssh_and_local
@@ -68,62 +91,46 @@ podman compose up -d
 docker-compose up -d
 ```
 
-### 3. Wait for SSH Container Setup
+### 3. Wait for the SSH container setup
 
-The SSH container takes a moment to:
-- Generate SSH keys (if not present)
-- Configure SSH server
-- Set up user permissions
-- Configure sudoers
+On first start, the SSH container needs a moment to generate SSH keys (if not present), configure the SSH server, set up user permissions, and configure sudoers. Verify in the logs:
 
-Check logs to verify:
 ```bash
 podman logs DEV_fail2ban-ssh
 ```
 
-Look for:
-```
-========================================
-SSH Test Container Ready
-========================================
-```
+### 4. Configure Fail2Ban UI
 
-### 4. Configure Fail2ban-UI
+1. **Open the UI** at `http://172.16.10.18:3080` (or your configured `BIND_ADDRESS:PORT`; with host networking also `http://localhost:3080`).
+2. **Add the local server.** Under **Manage Servers**, the local Fail2Ban instance should be auto-detected; enable the local connector.
+3. **Add the SSH server.** Under **Manage Servers**, click **Add Server** and configure:
 
-1. **Access Fail2ban UI:**
-   - Open `http://172.16.10.18:3080` (or your configured BIND_ADDRESS:PORT)
-   - Or if using host network: `http://localhost:3080`
+  | Field    | Value                                |
+  | -------- | ------------------------------------ |
+  | Name     | `SSH Test Server`                    |
+  | Type     | `SSH`                                |
+  | Host     | `127.0.0.1`                          |
+  | Port     | `2222`                               |
+  | SSH User | `testuser`                           |
+  | SSH Key  | `/config/.ssh/id_rsa` (auto-mounted) |
 
-2. **Add Local Server:**
-   - Go to "Manage Servers"
-   - The local Fail2ban instance should be auto-detected
-   - Enable the local connector
+   Enable the connector and click **Test Connection**.
 
-3. **Add SSH Server:**
-   - Go to "Manage Servers"
-   - Click "Add Server"
-   - Configure:
-     - **Name:** `SSH Test Server`
-     - **Type:** `SSH`
-     - **Host:** `127.0.0.1`
-     - **Port:** `2222`
-     - **SSH User:** `testuser`
-     - **SSH Key:** Select `/config/.ssh/id_rsa` (auto-mounted)
-   - Enable the connector
-   - Click "Test Connection" to verify
+## SSH connection details
 
-## SSH Connection Details
 
-- **Host:** `127.0.0.1`
-- **Port:** `2222`
-- **User:** `testuser`
-- **Key Path (in container):** `/config/.ssh/id_rsa`
-- **Key Path (host):** `./ssh-keys/id_rsa`
+| Property                | Value                 |
+| ----------------------- | --------------------- |
+| Host                    | `127.0.0.1`           |
+| Port                    | `2222`                |
+| User                    | `testuser`            |
+| Key path (in container) | `/config/.ssh/id_rsa` |
+| Key path (host)         | `./ssh-keys/id_rsa`   |
 
-### Test SSH Connection Manually
+
+Manual connection test:
 
 ```bash
-# From host
 podman exec -it DEV_fail2ban-ui ssh \
   -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null \
@@ -135,124 +142,123 @@ podman exec -it DEV_fail2ban-ui ssh \
 
 ## Configuration
 
-### Fail2ban-UI Environment Variables
+### Fail2Ban UI environment variables
 
 Edit `container-compose.yml` to customize:
 
 ```yaml
 environment:
   - PORT=3080
-  - BIND_ADDRESS=172.16.10.18  # Change to your IP or 0.0.0.0
-  # OIDC settings (if testing OIDC)
+  - BIND_ADDRESS=172.16.10.18  # Change to your IP, or 0.0.0.0
+  # OIDC settings (when testing OIDC)
   - OIDC_ENABLED=false  # Set to true to enable OIDC
 ```
 
-### SSH Container Customization
+### SSH container
 
 The SSH container is pre-configured with:
-- Passwordless SSH key authentication
-- Sudo permissions for `fail2ban-client *` and `systemctl restart fail2ban`
-- Proper file permissions (FACLs) for Fail2ban config directories
-- Root access for network management
 
-To modify SSH configuration, edit the `command` section in `container-compose.yml`.
+- passwordless SSH key authentication,
+- sudo permissions for `fail2ban-client *` and `systemctl restart fail2ban`,
+- the file permissions (FACLs) needed on the Fail2Ban configuration directories,
+- root access for network management.
 
-## Volume Structure
+To modify the SSH configuration, edit the `command` section in `container-compose.yml`.
+
+## Volume structure
 
 ```
-./config/              # Fail2ban-UI configuration and database
-./ssh-keys/            # SSH key pair (shared between containers)
-./fail2ban-config-local/  # Local Fail2ban configuration
-./f2b-run-local/       # Local Fail2ban socket directory
-./fail2ban-config-ssh/ # SSH Fail2ban configuration
-./fail2ban-config-agent/ # Agent Fail2ban configuration
+./config/                  # Fail2Ban UI configuration and database
+./ssh-keys/                # SSH key pair (shared between containers)
+./fail2ban-config-local/   # Local Fail2Ban configuration
+./f2b-run-local/           # Local Fail2Ban socket directory
+./fail2ban-config-ssh/     # SSH Fail2Ban configuration
+./fail2ban-config-agent/   # Agent Fail2Ban configuration
 ```
 
-## Testing Scenarios
+## Test scenarios
 
-### 1. Local Connector Test
+### 1. Local connector
 
-1. Enable local connector in Fail2ban-UI
-2. Create a test jail
-3. Verify jail appears in dashboard
-4. Test ban/unban operations
-5. Verify configuration changes persist
+1. Enable the local connector in Fail2Ban UI.
+2. Create a test jail.
+3. Verify the jail appears on the dashboard.
+4. Test ban and unban operations.
+5. Verify that configuration changes persist.
 
-### 2. Agent connector test
+### 2. Agent connector
 
-1. Start `fail2ban-agent` (`podman compose up -d fail2ban-agent`); the stack uses the prebuilt agent image (see **1b** if you need a newer tag or local build).
-2. Check logs: `podman logs DEV_fail2ban-agent` — Fail2ban should start and the agent should listen on `9700`.
-3. Quick check from the host: `curl -sS -H 'X-F2B-Token: dev-agent-secret-change-me' http://127.0.0.1:9700/healthz`
-4. In Fail2ban-UI → Manage Servers, add a server with type **Agent**, **agent URL** `http://127.0.0.1:9700` (or the container IP from the bridge), and **agent secret** `dev-agent-secret-change-me` (must match `AGENT_SECRET` in `container-compose.yml`).
-5. Optional: uncomment `AGENT_CALLBACK_*` env vars on `fail2ban-agent` to exercise ban/unban callbacks toward Fail2ban-UI.
+1. Start the agent container: `podman compose up -d fail2ban-agent`. The stack uses the prebuilt agent image; see [step 1b](#1b-fail2ban-ui-agent-image-optional) for a newer tag or a local build.
+2. Check the logs: `podman logs DEV_fail2ban-agent`. Fail2Ban should start and the agent should listen on `9700`.
+3. Quick check from the host:
+  ```bash
+   curl -sS -H 'X-F2B-Token: dev-agent-secret-change-me' http://127.0.0.1:9700/healthz
+  ```
+4. In Fail2Ban UI under **Manage Servers**, add a server with type **Agent**, agent URL `http://127.0.0.1:9700` (or the container IP from the bridge), and agent secret `dev-agent-secret-change-me` - it must match `AGENT_SECRET` in `container-compose.yml`.
+5. Optional: uncomment the `AGENT_CALLBACK_`* environment variables on `fail2ban-agent` to exercise the ban/unban callbacks toward Fail2Ban UI.
 
-### 3. SSH Connector Test
+### 3. SSH connector
 
-1. Add SSH server in Fail2ban-UI
-2. Test connection (should succeed)
-3. Create a test jail on remote server
-4. Verify jail appears in dashboard
-5. Test ban/unban operations
-6. Verify configuration changes sync to remote
+1. Add the SSH server in Fail2Ban UI.
+2. Test the connection; it should succeed.
+3. Create a test jail on the remote server.
+4. Verify the jail appears on the dashboard.
+5. Test ban and unban operations.
+6. Verify that configuration changes sync to the remote host.
 
-### 4. Multi-Server Management
+### 4. Multi-server management
 
-1. Enable both local and SSH connectors
-2. Verify both servers appear in server selector
-3. Switch between servers
-4. Verify each server's jails are isolated
-5. Test operations on each server independently
+1. Enable both the local and the SSH connector.
+2. Verify both servers appear in the server selector.
+3. Switch between servers.
+4. Verify each server's jails are isolated.
+5. Test operations on each server independently.
 
 ## Troubleshooting
 
-### SSH Connection Fails
+### SSH connection fails
 
-1. **Check SSH container is ready:**
-   ```bash
+1. Check that the SSH container is ready:
+  ```bash
    podman logs DEV_fail2ban-ssh | tail -20
-   ```
-
-2. **Verify SSH keys exist:**
-   ```bash
+  ```
+2. Verify the SSH keys exist:
+  ```bash
    ls -la ./ssh-keys/
-   ```
-
-3. **Test SSH manually:**
-   ```bash
+  ```
+3. Test SSH manually:
+  ```bash
    podman exec -it DEV_fail2ban-ui ssh -v -i /config/.ssh/id_rsa -p 2222 testuser@127.0.0.1
-   ```
-
-4. **Check SSH container port:**
-   ```bash
+  ```
+4. Check the SSH container port:
+  ```bash
    netstat -tlnp | grep 2222
-   ```
+  ```
 
-### Local Connector Issues
+### Local connector issues
 
-1. **Check socket exists:**
-   ```bash
+1. Check that the socket exists:
+  ```bash
    ls -la ./f2b-run-local/
-   ```
-
-2. **Verify permissions:**
-   ```bash
+  ```
+2. Verify the permissions:
+  ```bash
    podman exec -it DEV_fail2ban-local ls -la /var/run/fail2ban/
-   ```
-
-3. **Check Fail2ban status:**
-   ```bash
+  ```
+3. Check the Fail2Ban status:
+  ```bash
    podman exec -it DEV_fail2ban-local fail2ban-client status
-   ```
+  ```
 
-### Permission Errors
+### Permission errors
 
-- Ensure volumes have correct SELinux labels (`:z` or `:Z`)
-- Check container is running with required capabilities
-- Verify file permissions in mounted directories
+- Ensure the volumes have correct SELinux labels (`:z` or `:Z`).
+- Check that the container runs with the required capabilities.
+- Verify the file permissions in the mounted directories.
 
 ## Cleanup
 
-To remove all containers and volumes:
+Remove all containers and volumes:
 
 ```bash
 podman compose down -v
@@ -260,20 +266,15 @@ podman compose down -v
 docker-compose down -v
 ```
 
-This will remove:
-- All containers
-- Volume data (configs, SSH keys, databases)
+**Warning:** This deletes all development data - configurations, SSH keys, and databases. SSH keys are regenerated on the next start.
 
-**Note:** This deletes all development data. SSH keys will be regenerated on next start.
+## Production considerations
 
-## Production Considerations
+This setup is for development only. For production:
 
-⚠️ **This setup is for development only!**
+- Use proper SSH key management, not the auto-generated key from this stack.
+- Use dedicated service accounts, not `testuser`.
+- Use HTTPS/TLS, not HTTP, and a properly configured reverse proxy.
+- Use strong, randomly generated secrets, including the session secrets.
+- Enable proper logging and monitoring.
 
-For production:
-- Use proper SSH key management (not this auto-generated key)
-- Use dedicated service accounts (not testuser)
-- Use HTTPS/TLS (not HTTP) / Configure proper reverse proxy
-- Use strong, randomly generated secrets
-- Use secure session secrets
-- Enable proper logging and monitoring

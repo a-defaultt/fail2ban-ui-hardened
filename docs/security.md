@@ -1,118 +1,117 @@
 # Security guidance
 
-This project can perform security-sensitive operations (bans, configuration changes). Deploy it as you would deploy every other administrative interface.
+Fail2Ban UI performs security-sensitive operations: it bans addresses, changes firewall state, and edits Fail2Ban configuration on managed hosts. Deploy it as you would deploy any other administrative interface.
 
 ## Recommended deployment posture
 
-- Do not expose the UI directly to the Internet.
-- Prefer one of:
-  - VPN-only access
-  - Reverse proxy with strict allowlists
-  - OIDC enabled (in addition to network controls)
+* Do not expose the UI directly to the Internet.
+* Prefer one of:
+  * VPN-only access
+  * A reverse proxy with strict source allowlists
+  * OIDC enabled, in addition to network controls
+* If you must publish it, put it behind TLS and an authentication layer, and restrict source IPs.
 
-If you must publish it, put it behind TLS and an authentication layer, and restrict source IPs.
-
-See [`docs/reverse-proxy.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/reverse-proxy.md) for hardened proxy examples and WebSocket forwarding requirements.
+See [reverse-proxy.md](reverse-proxy.md) for hardened proxy examples and the WebSocket forwarding requirements.
 
 ## Input validation
 
-All user-supplied IP addresses are validated using Go's `net.ParseIP` and `net.ParseCIDR` before they are passed to any integration, command, or database query. This applies to:
+All user-supplied IP addresses are validated with Go's `net.ParseIP` and `net.ParseCIDR` before they reach any integration, command, or database query. This applies to:
 
-- Ban/Unban callbacks (`/api/ban`, `/api/unban`)
-- Manual ban/unban actions from the dashboard
-- Advanced action test endpoint (`/api/advanced-actions/test`)
-- All integration connectors (MikroTik, pfSense, OPNsense)
+* Ban/unban callbacks (`/api/ban`, `/api/unban`)
+* Manual ban and unban actions from the dashboard
+* The advanced-actions test endpoint (`/api/advanced-actions/test`)
+* All integration connectors (MikroTik, pfSense, OPNsense)
 
-Integration-specific identifiers (address list names, alias names) are validated against a strict alphanumeric pattern (`[a-zA-Z0-9._-]`) to prevent injection in both SSH commands and API payloads.
+Integration-specific identifiers, such as address-list and alias names, are validated against a strict alphanumeric pattern (`[a-zA-Z0-9._-]`) to prevent injection in SSH commands and API payloads.
 
 ## WebSocket security
 
 The WebSocket endpoint (`/api/ws`) is protected by:
 
-- **Origin validation**: The upgrade handshake verifies that the `Origin` header matches the request's `Host` header (same-origin policy). Cross-origin WebSocket connections are rejected. This prevents cross-site WebSocket hijacking attacks.
-- **Authentication**: When OIDC is enabled, the WebSocket endpoint requires a valid session.
+* **Origin validation.** The upgrade handshake verifies that the `Origin` header matches the request's `Host` header (same-origin policy). Cross-origin WebSocket connections are rejected, which prevents cross-site WebSocket hijacking.
+* **Authentication.** When OIDC is enabled, the endpoint requires a valid session.
 
 ## Callback endpoint protection
 
-The callback endpoints (`/api/ban`, `/api/unban`) are protected by `CALLBACK_SECRET` (`X-Callback-Secret` header). If no secret is specified, Fail2Ban UI generates one on first start. Additional hardening:
+The callback endpoints (`/api/ban`, `/api/unban`) are protected by `CALLBACK_SECRET`, transmitted in the `X-Callback-Secret` header. If no secret is configured, Fail2Ban UI generates one on first start.
 
-- Use a long, random secret and rotate it on suspected leakage
-- Restrict network access so only known Fail2Ban hosts can reach callback endpoints
+Additional hardening:
 
-Rotate the secret if you suspect leakage.
+* Use a long, random secret and rotate it on suspected leakage.
+* Restrict network access so that only the managed Fail2Ban hosts can reach the callback endpoints.
 
 ## SSH connector hardening
 
 For SSH-managed hosts:
 
-- Use a dedicated service account (not a human user).
-- Require key-based auth.
-- Restrict sudo to the minimum set of commands required to operate Fail2Ban (at minimum `fail2ban-client *` and `systemctl restart fail2ban`).
-- Use filesystem ACLs for `/etc/fail2ban` rather than broad permissions to allow full modification capabilities for the specific user.
+* Use a dedicated service account, not a human user.
+* Require key-based authentication.
+* Restrict sudo to the minimum command set needed to operate Fail2Ban - at minimum `fail2ban-client *` and `systemctl restart fail2ban`.
+* Grant write access to `/etc/fail2ban` through filesystem ACLs for that specific account, rather than through broad directory permissions.
 
 ## Integration connector hardening
 
-When using external firewall integrations (MikroTik, pfSense, OPNsense):
+When using the firewall integrations (MikroTik, pfSense, OPNsense):
 
-- Use a dedicated service account on the firewall device with the minimum permissions needed (address-list management only on MikroTik; alias management only on pfSense/OPNsense).
-- For pfSense/OPNsense: use a dedicated API token with limited scope.
-- Restrict network access so the Fail2ban-UI host is the only source allowed to reach the firewall management interface.
+* Use a dedicated service account on the firewall device with the minimum permissions needed: address-list management only on MikroTik; alias management only on pfSense and OPNsense.
+* For pfSense and OPNsense, use a dedicated API token with limited scope.
+* Restrict network access so the Fail2Ban UI host is the only source allowed to reach the firewall management interface.
 
 ## Least privilege and file access
 
-Local connector deployments typically require access to:
-- `/var/run/fail2ban/fail2ban.sock`
-- `/etc/fail2ban/`
-- selected log paths (read-only, mounted to same place inside the container, where they are on the host.)
+Local-connector deployments typically require access to:
 
-Avoid running with more privileges than necessary. If you run in a container, use the repository deployment guide and, where needed, the optional container SELinux modules.
+* `/var/run/fail2ban/fail2ban.sock`
+* `/etc/fail2ban/`
+* Selected log paths, read-only, mounted at the same paths inside the container as on the host
+
+Avoid running with more privileges than necessary. In a container, follow the [container deployment guide](../deployment/container/README.md) and, where needed, the optional SELinux modules.
 
 ## SELinux
 
 Do not disable SELinux as a shortcut. Fix labeling, booleans, and policy issues instead.
 
-### Fail2Ban ban/unban callbacks (`curl` from `fail2ban_t`)
+### Fail2Ban callbacks: `curl` from `fail2ban_t`
 
-The UI installs an action that runs `curl` from the Fail2Ban service context to reach `/api/ban` and `/api/unban`. With SELinux enforcing, you may see denials such as `curl` / `fail2ban_t` / `name_connect` / `tcp_socket` / `http_port_t` (for example when the callback URL uses HTTPS on port 443).
+The UI installs an action that runs `curl` from the Fail2Ban service context to reach `/api/ban` and `/api/unban`. With SELinux enforcing, you may see denials such as `curl` / `fail2ban_t` / `name_connect` / `tcp_socket` / `http_port_t` - for example when the callback URL uses HTTPS on port 443.
 
-On RHEL-family systems, `setroubleshoot` typically recommends enabling the **`nis_enabled`** boolean, which allows this class of outbound connection:
+On RHEL-family systems, `setroubleshoot` typically recommends the `nis_enabled` boolean, which allows this class of outbound connection:
 
 ```bash
 sudo setsebool -P nis_enabled 1
 ```
 
-Prefer that over ad-hoc `audit2allow` modules unless your organization requires a different control.
+Prefer the distribution boolean over ad-hoc `audit2allow` modules, unless your organization requires a different control.
 
-### Container ↔ host Fail2Ban (optional modules)
+### Container to host Fail2Ban (optional modules)
 
-If the UI runs in Podman/Docker with a **local** connector, extra rules can be needed so `container_t` can use the Fail2Ban socket and read the right logs (not the same problem as the callback boolean above). Sources and build steps are in `deployment/container/SELinux/`.
+If the UI runs in Podman or Docker with a *local* connector, additional rules can be needed so that `container_t` can use the Fail2Ban socket and read the expected logs. This is a different problem from the callback boolean above. Sources and build steps are in [deployment/container/SELinux/](../deployment/container/SELinux/).
 
 ## Alert provider security
 
-Fail2Ban UI supports three alert providers: Email (SMTP), Webhook, and Elasticsearch. Each has specific security considerations.
+Fail2Ban UI supports three alert providers: Email (SMTP), Webhook, and Elasticsearch.
 
 ### Email (SMTP)
 
-- Use TLS (`Use TLS` enabled) for all SMTP connections.
-- Avoid disabling TLS verification (`Skip TLS Verification`) in production. If you must, ensure the network path to the SMTP server is trusted.
-- Use application-specific passwords or OAuth tokens where supported (e.g. Gmail, Office365) instead of primary account passwords.
+* Enable TLS (**Use TLS**) for all SMTP connections.
+* Do not disable certificate validation (**Skip TLS Verification**) in production. If you must, ensure the network path to the SMTP server is trusted.
+* Where supported (Gmail, Office365), use application-specific passwords or OAuth tokens instead of primary account passwords.
 
 ### Webhook
 
-- Use HTTPS endpoints whenever possible.
-- If the webhook endpoint requires authentication, use custom headers (e.g. `Authorization: Bearer <token>`) rather than embedding credentials in the URL.
-- Avoid disabling TLS verification for production endpoints. The `Skip TLS Verification` option exists for development/self-signed environments only.
+* Use HTTPS endpoints whenever possible.
+* If the endpoint requires authentication, pass it in custom headers (for example `Authorization: Bearer <token>`) rather than embedding credentials in the URL.
+* The **Skip TLS Verification** option exists for development and self-signed environments only.
 
 ### Elasticsearch
 
-- Use API key authentication over basic auth when possible. API keys can be scoped to specific indices and rotated independently.
-- Restrict the API key to write-only access on the `fail2ban-events-*` index pattern. Avoid cluster-wide or admin-level keys.
-- Consider using Elasticsearch's built-in role-based access control to limit what the Fail2Ban UI service account can do.
-
+* Prefer API-key authentication over basic auth. API keys can be scoped to specific indices and rotated independently.
+* Restrict the API key to write-only access on the `fail2ban-events-*` index pattern. Avoid cluster-wide or admin-level keys.
+* Use Elasticsearch role-based access control to limit what the Fail2Ban UI service account can do.
 
 ## Audit and operational practices
 
-- Back up `/config` (DB + settings) regularly.
-- Treat the database as sensitive operational data.
-- Keep the host and container runtime patched.
-- Review Fail2Ban actions deployed to managed hosts as part of change control.
+* Back up `/config` (database and settings) regularly.
+* Treat the database as sensitive operational data.
+* Keep the host and the container runtime patched.
+* Review the Fail2Ban actions deployed to managed hosts as part of your change control.

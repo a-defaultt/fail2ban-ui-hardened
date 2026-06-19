@@ -1,40 +1,29 @@
-# Fail2Ban UI Container Deployment Guide
+# Container deployment
 
-A comprehensive guide for building and deploying Fail2Ban UI using containers (Docker/Podman).
+This guide covers building and running Fail2Ban UI with Podman or Docker.
 
-## Table of Contents
+## Quick start
 
-- [Quick Start](#quick-start)
-- [Building the Container Image](#building-the-container-image)
-- [Running the Container](#running-the-container)
-- [Volume Mounts](#volume-mounts)
-- [Configuration](#configuration)
-- [Docker Compose](#docker-compose)
-- [Fail2Ban Banaction Configuration](#fail2ban-banaction-configuration)
-- [SELinux Configuration](#selinux-configuration)
-- [Troubleshooting](#troubleshooting)
+### Pull the image
 
----
+From Docker Hub (default):
 
-## Quick Start
-
-### Using Pre-built Image
-
-**Pull the official image with podman from Docker Hub (default):**
 ```bash
 podman pull swissmakers/fail2ban-ui:latest
 # or with Docker:
 docker pull swissmakers/fail2ban-ui:latest
 ```
 
-**Alternative: Pull from Swissmakers registry (fallback):**
+From the Swissmakers registry (fallback):
+
 ```bash
 podman pull registry.swissmakers.ch/infra/fail2ban-ui:latest
 # or with Docker:
 docker pull registry.swissmakers.ch/infra/fail2ban-ui:latest
 ```
 
-**Run the container:**
+### Run the container
+
 ```bash
 podman run -d \
   --name fail2ban-ui \
@@ -46,46 +35,35 @@ podman run -d \
   swissmakers/fail2ban-ui:latest
 ```
 
-Access the web interface at `http://localhost:8080` (or your configured port).
+The web interface is available at `http://localhost:8080`, or at your configured port.
 
----
-
-## Building the Container Image
+## Building the image
 
 ### Prerequisites
 
-- Docker or Podman installed
-- Git (to clone the repository)
+- Docker or Podman
+- Git
 
-### Build Steps
+### Procedure
 
-1. **Clone the repository:**
-   ```bash
+1. Clone the repository:
+  ```bash
    git clone https://github.com/swissmakers/fail2ban-ui.git
    cd fail2ban-ui
-   ```
-
-2. **Build the image:**
-   ```bash
-   # Using Podman
+  ```
+2. Build the image:
+  ```bash
    podman build -t fail2ban-ui:dev .
-   
-   # Using Docker
-   docker build -t fail2ban-ui:dev .
-   ```
-
-   > **Note:** The Dockerfile uses a multi-stage build with two stages: `builder` (compiles the Go binary) and `standalone-ui` (final runtime image).
-
-3. **Verify the build:**
-   ```bash
-   podman images fail2ban-ui
    # or
-   docker images fail2ban-ui
-   ```
+   docker build -t fail2ban-ui:dev .
+  ```
+   **Note:** The Dockerfile uses a multi-stage build with two stages, `builder` compiles the Go binary, `standalone-ui` is the final runtime image.
+3. Verify the build:
+  ```bash
+   podman images fail2ban-ui
+  ```
 
-### Build Options
-
-You can customize the build with additional flags:
+Build options:
 
 ```bash
 # Build with a specific tag
@@ -95,11 +73,9 @@ podman build -t fail2ban-ui:v1.0.0 .
 podman build --no-cache -t fail2ban-ui:dev .
 ```
 
----
+## Running the container
 
-## Running the Container
-
-### Basic Run Command (for a local fail2ban connection)
+### Basic run command (local Fail2Ban instance)
 
 ```bash
 podman run -d \
@@ -112,9 +88,9 @@ podman run -d \
   fail2ban-ui:latest
 ```
 
-### Custom Port Configuration
+### Custom port
 
-You can change the default port (8080) using the `PORT` environment variable:
+Change the default port (8080) with the `PORT` environment variable:
 
 ```bash
 podman run -d \
@@ -128,224 +104,170 @@ podman run -d \
   fail2ban-ui:latest
 ```
 
-Access the web interface at `http://localhost:8436`.
+The web interface is then available at `http://localhost:8436`.
 
-### Container Management
+### Container management
 
-**Start the container:**
 ```bash
-podman start fail2ban-ui
-```
+podman start fail2ban-ui          # start
+podman stop fail2ban-ui           # stop
+podman logs -f fail2ban-ui        # follow logs
+podman exec -it fail2ban-ui /bin/bash   # shell inside the container
 
-**Stop the container:**
-```bash
-podman stop fail2ban-ui
-```
-
-**View logs:**
-```bash
-podman logs -f fail2ban-ui
-```
-
-**Remove the container:**
-```bash
+# remove:
 podman stop fail2ban-ui
 podman rm fail2ban-ui
 ```
 
-**Execute commands inside the container:**
-```bash
-podman exec -it fail2ban-ui /bin/bash
-```
+## Volume mounts
 
----
 
-## Volume Mounts
+| Volume              | Required             | Access     | SELinux flag | Purpose                                          |
+| ------------------- | -------------------- | ---------- | ------------ | ------------------------------------------------ |
+| `/config`           | yes                  | read/write | `:Z`         | SQLite database, settings, SSH keys              |
+| `/etc/fail2ban`     | local connector only | read/write | `:Z`         | Fail2Ban configuration files                     |
+| `/var/run/fail2ban` | local connector only | read/write | - (tmpfs)    | Fail2Ban control socket                          |
+| `/var/log`          | local connector only | read-only  | `:ro`        | System logs for automated log path tests         |
+| GeoIP directory     | optional             | read-only  | `:ro`        | MaxMind databases, only for the MaxMind provider |
 
-The Fail2Ban UI container requires several volume mounts to function properly. Below is a detailed explanation of each volume:
 
-### Required Volumes
+Details:
 
-#### `/config` - Configuration and Database Storage
-- **Host Path:** `/opt/podman-fail2ban-ui` (or your preferred location)
-- **Container Path:** `/config`
-- **Purpose:** Stores the SQLite database (`fail2ban-ui.db`), application settings, and SSH keys for remote server connections
-- **Permissions:** Read/Write
-- **SELinux Context:** `:Z` flag required on SELinux-enabled systems
-- **Contents:**
-  - `fail2ban-ui.db` - SQLite database with server configurations and ban events
-  - `.ssh/` - Directory for SSH keys used for remote server connections
-  - Application configuration files
+### `/config` - configuration and database storage
 
-#### `/etc/fail2ban` - Fail2Ban configuration directory (required for local connector only)
-- **Host Path:** `/etc/fail2ban`
-- **Container Path:** `/etc/fail2ban`
-- **Purpose:** Access to Fail2Ban configuration files (jails, filters, actions)
-- **Permissions:** Read/Write (required for configuration management)
-- **SELinux Context:** `:Z` flag required on SELinux-enabled systems
-- **Note:** Required if managing local Fail2Ban instance
+- Host path: `/opt/podman-fail2ban-ui`, or any preferred location.
+- Stores the SQLite database (`fail2ban-ui.db`) with server configurations and ban events, application settings, and the `.ssh/` directory with the keys used for remote server connections.
+- On SELinux-enabled systems, mount with the `:Z` flag.
 
-#### `/var/run/fail2ban` - Fail2Ban socket directory (required for local connector only)
-- **Host Path:** `/var/run/fail2ban`
-- **Container Path:** `/var/run/fail2ban`
-- **Purpose:** Access to Fail2Ban control socket (`fail2ban.sock`)
-- **Permissions:** Read/Write
-- **SELinux Context:** Not required (tmpfs)
-- **Note:** Required for local Fail2Ban management
+### `/etc/fail2ban` - Fail2Ban configuration
 
-#### `/var/log` - Log files (required for local connector only)
-- **Host Path:** `/var/log`
-- **Container Path:** `/var/log`
-- **Purpose:** Read access to system logs for automatic logpath tests when enabling jails
-- **Permissions:** Read-Only (`:ro`)
-- **Note:** If test fails, jail is auto-disabled to prevent fail2ban daemon errors
+- Required only when managing a local Fail2Ban instance.
+- Read/write access is required for configuration management.
+- On SELinux-enabled systems, mount with the `:Z` flag.
 
-### Optional Volumes
+### `/var/run/fail2ban` - Fail2Ban socket directory
 
-#### GeoLite2-Country.mmdb - GeoIP Database
-- **Host Path:** `/path/to/your/GeoIPFolder`
-- **Container Path:** e.g. `/usr/share/GeoIP` (path must match the setting in the UI)
-- **Purpose:** Only needed if you want to use the MaxMind provider.
-- **Permissions:** Read-Only (`:ro`)
-- **Note:** Fail2Ban UI uses the built-in ip-api.com by default, which requires no local database
+- Required only for the local connector; provides access to the control socket `fail2ban.sock`.
+- No SELinux flag is needed (tmpfs).
 
-### Volume Summary Table
+### `/var/log` - log files
 
-| Volume | Required | Read/Write | SELinux Context | Purpose |
-|--------|----------|------------|-----------------|---------|
-| `/config` | ✅ Yes | Read/Write | `:Z` | Database, settings, SSH keys |
-| `/etc/fail2ban` | ✅ Yes* | Read/Write | `:Z` | Fail2Ban configuration files |
-| `/var/run/fail2ban` | ✅ Yes* | Read/Write | - | Fail2Ban control socket |
-| `/var/log` | ✅ Yes* | Read-Only | `:ro` | System log files for automated logpath tests on jail management. |
-| `/path/to/your/GeoIPFolder` | ⚠️ Optional | Read-Only | `:ro` | MaxMind GeoIP databases (only needed if using MaxMind provider) |
+- Required only for the local connector; mounted read-only (`:ro`).
+- Used for the automatic log path tests when jails are enabled. If a test fails, the jail is auto-disabled to prevent Fail2Ban daemon errors.
 
-*Required only if managing a local Fail2Ban instance. Not needed for remote-only deployments.
+### GeoIP database (optional)
 
----
+- Mount the directory containing `GeoLite2-Country.mmdb` read-only, for example to `/usr/share/GeoIP`. The container path must match the path configured in the UI.
+- Only needed for the MaxMind provider. By default, Fail2Ban UI uses the built-in ip-api.com provider, which requires no local database.
 
 ## Configuration
 
-### Environment Variables
+### Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `8080` | Port number for the web interface |
-| `BIND_ADDRESS` | `0.0.0.0` | IP address to bind the web interface to. Useful when running with host networking to prevent exposing the web UI to unprotected networks. Set to a specific IP (e.g., `127.0.0.1` or a specific interface IP) to restrict access. |
-| `CONTAINER` | `true` | Automatically set by the container (do not override) |
 
-### First Launch Configuration
+| Variable       | Default   | Description                                                                                                                                                |
+| -------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`         | `8080`    | Port of the web interface                                                                                                                                  |
+| `BIND_ADDRESS` | `0.0.0.0` | Listen address. With host networking, set a specific IP, for example `127.0.0.1` or an internal interface IP, to keep the web UI off unprotected networks. |
+| `CONTAINER`    | `true`    | Set automatically by the container; do not override                                                                                                        |
 
-After starting the container, access the web interface and configure your first Fail2Ban server:
 
-1. **Access the Web Interface**
-   - Navigate to `http://localhost:8080` (or your configured port)
+For the full list, including `CALLBACK_URL`, `CALLBACK_SECRET`, `BASE_PATH`, and OIDC, see [docs/configuration.md](../../docs/configuration.md).
 
-2. **Add Your First Server**
-   - Go to **Settings** → **Manage Servers**
-   - **Local Server**: Enable the local connector if Fail2Ban runs on the same host
-   - **Remote Server**: Add via SSH or API agent connection
+### First launch
 
-3. **Configure Settings**
-   - **Fail2Ban Callback URL**: This URL is used by all Fail2Ban instances to send ban alerts back to Fail2Ban UI
-     - For local deployments: Use the same port as Fail2Ban UI (e.g., `http://127.0.0.1:8080` or your configured port)
-     - For reverse proxy setups: Use your TLS-encrypted endpoint (e.g., `https://fail2ban.example.com`)
-     - The callback URL automatically updates when you change the server port (if using the default localhost pattern)
-   - **Callback URL Secret**: Auto-generated 42-character secret for authenticating ban notification requests (viewable in Settings with show/hide toggle)
-   - **GeoIP Provider**: Choose between MaxMind (local database) or Built-in (ip-api.com) - default is Built-in
-   - **Maximum Log Lines**: Configure how many log lines to include in ban notifications (default: 50)
-   - Set up email alerts (optional)
-   - Configure language preferences
-   - Adjust security settings
+1. **Open the web interface** at `http://localhost:8080` (or your configured port).
+2. **Add your first server** under **Settings → Manage Servers**:
+  - Local server: enable the local connector if Fail2Ban runs on the same host.
+  - Remote server: add a server over SSH or through an API agent.
+3. **Configure the settings**
+  - **Fail2Ban Callback URL**: the URL every Fail2Ban instance uses to send ban alerts back to the UI.
+    - Local deployments: use the same port as Fail2Ban UI, for example `http://127.0.0.1:8080`.
+    - Reverse proxy setups: use the TLS-terminated endpoint, for example `https://fail2ban.example.com`.
+    - The callback URL updates automatically when you change the server port, as long as the default localhost pattern is in use.
+  - **Callback URL Secret**: an auto-generated 42-character secret that authenticates ban notification requests, viewable in the settings with a show/hide toggle.
+  - **GeoIP Provider**: MaxMind (local database) or Built-in (ip-api.com). The default is Built-in.
+  - **Maximum Log Lines**: how many log lines to include in ban notifications (default: 50).
+  - Email alerts, alert countries, language preferences, and the security settings as needed.
 
-> **Note:** The local Fail2Ban service is optional. Fail2Ban UI can manage remote Fail2Ban servers via SSH or API agents without requiring a local Fail2Ban installation in the container.
+**Note:** A local Fail2Ban service is optional. Fail2Ban UI can manage remote Fail2Ban servers over SSH or API agents without a local Fail2Ban installation in the container.
 
-> **Important:** The Fail2Ban Callback URL must be accessible from all Fail2Ban instances (local and remote) that need to send alerts. If you change the Fail2Ban UI port, ensure the callback URL is updated accordingly.
+**Important:** The callback URL must be reachable from every Fail2Ban instance, local and remote, that sends alerts. If you change the UI port, update the callback URL accordingly.
 
----
+## Compose
 
-## Docker Compose
-
-For easier management, you can use Docker Compose. Create a `docker-compose.yml` file:
+For easier management, use a Compose file:
 
 ```yaml
 services:
   fail2ban-ui:
-    # Use pre-built image from Docker Hub (default)
+    # Pre-built image from Docker Hub (default)
     image: swissmakers/fail2ban-ui:latest
 
-    # Alternative: Use Swissmakers registry (fallback)
+    # Alternative: Swissmakers registry (fallback)
     # image: registry.swissmakers.ch/infra/fail2ban-ui:latest
 
-    # Or build from source (uncomment to use):
+    # Or build from source:
     # build:
     #   context: .
     #   dockerfile: Dockerfile
 
     container_name: fail2ban-ui
-    #privileged: true # needed if you want to use a container-local fail2ban instance (because fail2ban.sock is owned by root)
-    # a single all-in-one container is planned, currently you need to use the fail2ban container from linuxserver, see docker-compose-allinone.yml for an example
+    # privileged: true  # needed only for a container-local Fail2Ban instance
+    #                   # (fail2ban.sock is owned by root); see the all-in-one example
     network_mode: host
 
     environment:
-      # Change this to use a different port for the web interface (defaults is 8080)
+      # Port of the web interface (default: 8080)
       - PORT=8080
 
     volumes:
-      # Required for fail2ban-ui: Stores SQLite database, application settings, and SSH keys of the fail2ban-ui container
+      # Required: SQLite database, application settings, and SSH keys
       - /opt/podman-fail2ban-ui:/config:Z
-      # Required for fail2ban-ui: used to validate logpaths before enabling jails
+      # Required: validates log paths before enabling jails
       - /var/log:/var/log:ro
 
-      # Required for local fail2ban instance: Fail2Ban configuration directory, needed for managing a local Fail2Ban instance (e.g. on host system) via fail2ban-ui
+      # Required for a local Fail2Ban instance: configuration directory
       - /etc/fail2ban:/etc/fail2ban:Z
-      # Required for local fail2ban instance: Fail2Ban socket directory, needed for local Fail2Ban (e.g. on host system) for control via fail2ban-ui
+      # Required for a local Fail2Ban instance: control socket
       - /var/run/fail2ban:/var/run/fail2ban
 
-      # Optional: Map MaxMind GeoIP databases (only needed if using MaxMind provider)
+      # Optional: MaxMind GeoIP databases (MaxMind provider only)
       #- /usr/share/GeoIP:/usr/share/GeoIP:ro
 
     restart: unless-stopped
 ```
 
-**Start with Docker Compose:**
 ```bash
-docker-compose up -d
+docker-compose up -d      # start
+docker-compose logs -f    # follow logs
+docker-compose down       # stop
 ```
 
-**View logs:**
-```bash
-docker-compose logs -f
-```
+### All-in-one setup (Fail2Ban + Fail2Ban UI)
 
-**Stop:**
-```bash
-docker-compose down
-```
-
-### All-in-One Docker Compose Setup
-
-For a complete containerized setup with both Fail2Ban and Fail2Ban UI, use the all-in-one Docker Compose configuration:
+For a fully containerized setup with both Fail2Ban and Fail2Ban UI, use the all-in-one Compose example:
 
 ```bash
-# Copy the all-in-one example file
+# Copy the example from the project root
 cp ../docker-compose-allinone.example.yml docker-compose.yml
 
-# Edit docker-compose.yml to customize:
-# - PORT environment variable for Fail2Ban UI
-# - Timezone (TZ environment variable)
-# - Volume paths
+# Adjust in docker-compose.yml:
+# - PORT for the UI
+# - timezone (TZ)
+# - volume paths
 
-# Start both services
 docker-compose up -d
 ```
 
-**Features:**
-- **Combined Setup**: Fail2Ban (linuxserver/fail2ban) and Fail2Ban UI in one compose file
-- **Shared Configuration**: Both containers share the same Fail2Ban configuration directory
-- **Shared Socket**: Both containers access the same Fail2Ban control socket
-- **Network Mode**: Uses `host` network mode for proper iptables integration
+Characteristics:
 
-**Volume Structure:**
+- Fail2Ban (linuxserver/fail2ban) and Fail2Ban UI in a single Compose file
+- Both containers share the same Fail2Ban configuration directory and control socket
+- `network_mode: host` for proper iptables integration
+
+Volume structure:
+
 ```
 ./fail2ban-config/fail2ban  → /config/fail2ban (fail2ban container)
 ./fail2ban-config/fail2ban  → /etc/fail2ban (fail2ban-ui container)
@@ -353,58 +275,58 @@ docker-compose up -d
 ./config                    → /config (fail2ban-ui container)
 ```
 
-**Important Notes:**
-- The fail2ban-ui container requires `privileged: true` to modify Fail2Ban configs owned by root
-- Both containers must use `network_mode: host` for proper networking
-- Ensure SELinux labels are correct (`:z` or `:Z` flags)
+**Important:**
+
+- The fail2ban-ui container requires `privileged: true` in this setup to modify Fail2Ban configs owned by root.
+- Both containers must use `network_mode: host`.
+- Ensure the SELinux labels are correct (`:z` or `:Z` flags).
 
 See `docker-compose-allinone.example.yml` in the project root for the complete configuration.
 
----
+## Fail2Ban banaction configuration
 
-## Fail2Ban Banaction Configuration
+### nftables vs. iptables
 
-### nftables vs iptables
-
-Modern Linux distributions (Rocky Linux 9+, RHEL 9+, Fedora 36+, Debian 12+) use **nftables** as the default firewall backend instead of legacy iptables. When Fail2Ban is configured to use `iptables-multiport` or `iptables-allports`, it may fail with errors like:
+Modern distributions - Rocky Linux 9+, RHEL 9+, Fedora 36+, Debian 12+ - use **nftables** as the default firewall backend. When Fail2Ban is configured with `iptables-multiport` or `iptables-allports`, it may fail with errors such as:
 
 - `Extension multiport revision 0 not supported, missing kernel module?`
 - `iptables v1.8.11 (nf_tables): RULE_INSERT failed (No such file or directory)`
 
-**Solution:** Configure Fail2Ban to use nftables-based actions:
+Solution - switch Fail2Ban to nftables-based actions:
 
-1. Access the Fail2Ban UI web interface
-2. Navigate to **Settings** → **Fail2Ban Settings**
-3. Change **Banaction** from `iptables-multiport` to `nftables-multiport`
-4. Change **Banaction Allports** from `iptables-allports` to `nftables-allports`
-5. Save settings (Fail2Ban will automatically reload)
+1. Open the Fail2Ban UI web interface.
+2. Go to **Settings → Fail2Ban Settings**.
+3. Change **Banaction** from `iptables-multiport` to `nftables-multiport`.
+4. Change **Banaction Allports** from `iptables-allports` to `nftables-allports`.
+5. Save; Fail2Ban reloads automatically.
 
-### firewalld (Rocky Linux / Red Hat)
+### firewalld (RHEL, Rocky Linux)
 
-For systems using `firewalld` as the firewall management tool (common on Rocky Linux and Red Hat Enterprise Linux), you can use:
+For systems managed by `firewalld`, use:
 
 - **Banaction**: `firewallcmd-rich-rules`
 - **Banaction Allports**: `firewallcmd-allports`
 
-Alternatively, if firewalld is configured to use the nftables backend (default in RHEL 9+), you can use `nftables-multiport` / `nftables-allports` as described above.
+Alternatively, since firewalld uses the nftables backend by default on RHEL 9+, the `nftables-multiport` / `nftables-allports` actions also work.
 
-**Verify your system's firewall backend:**
+Verify the firewall backend:
+
 ```bash
-# Check if using nftables
+# nftables backend in use?
 iptables --version
-# Output: iptables v1.8.11 (nf_tables) indicates nftables backend
+# "iptables v1.8.11 (nf_tables)" indicates the nftables backend
 
-# Check if firewalld is active
+# firewalld active?
 systemctl status firewalld
 ```
 
----
+## SELinux configuration
 
-## SELinux Configuration
+With SELinux enabled, the optional modules below may be needed so the **container** can talk to the host Fail2Ban socket and read the expected logs.
 
-If SELinux is enabled on your system, you may need the optional modules below so the **container** can talk to the host Fail2Ban socket and read the expected logs. That is separate from **host** Fail2Ban calling back to the UI with `curl`: for denials on `fail2ban_t` connecting to HTTP/HTTPS ports, see [`docs/security.md`](../../docs/security.md#selinux) (typically solved by `setsebool -P nis_enabled 1` on RHEL-family systems).
+**Note:** This is separate from the **host** Fail2Ban calling back to the UI with `curl`. For denials on `fail2ban_t` connecting to HTTP/HTTPS ports, see [docs/security.md](../../docs/security.md#selinux) - typically solved with `setsebool -P nis_enabled 1` on RHEL-family systems.
 
-### Apply Pre-built Policies
+### Apply the pre-built policies
 
 The policies are located in `./SELinux/`:
 
@@ -414,9 +336,9 @@ semodule -i fail2ban-container-ui.pp
 semodule -i fail2ban-container-client.pp
 ```
 
-### Manually Compile and Install Policies
+### Compile and install the policies manually
 
-If you want to modify or compile the SELinux rules yourself:
+To modify or rebuild the SELinux rules:
 
 ```bash
 cd deployment/container/SELinux
@@ -431,137 +353,98 @@ semodule_package -o fail2ban-container-client.pp -m fail2ban-container-client.mo
 semodule -i fail2ban-container-client.pp
 ```
 
-### Verify SELinux Policies
+### Verification
 
 ```bash
 semodule -l | grep fail2ban
 ```
 
-You should see:
+Expected output:
+
 - `fail2ban-container-ui`
 - `fail2ban-container-client`
 
----
-
 ## Troubleshooting
 
-### Fail2Ban Cannot Ban IPs (nftables/firewalld Issues)
+### Fail2Ban cannot ban IPs (nftables/firewalld issues)
 
-If Fail2Ban fails to ban IPs with errors related to iptables or multiport extensions, see the [Fail2Ban Banaction Configuration](#fail2ban-banaction-configuration) section above for detailed solutions.
+If Fail2Ban fails to ban IPs with errors related to iptables or multiport extensions, see [Fail2Ban banaction configuration](#fail2ban-banaction-configuration) above.
 
-### UI Not Accessible
+### UI not accessible
 
-**Symptoms:** Cannot access web interface
-
-**Solutions:**
-1. **Check if container is running:**
-   ```bash
+1. Check whether the container is running:
+  ```bash
    podman ps | grep fail2ban-ui
-   ```
-
-2. **Check container logs:**
-   ```bash
+  ```
+2. Check the container logs:
+  ```bash
    podman logs fail2ban-ui
-   ```
-
-3. **Verify port is not blocked by firewall:**
-   ```bash
+  ```
+3. Verify the port is not blocked by the firewall:
+  ```bash
    sudo firewall-cmd --list-ports
    sudo firewall-cmd --add-port=8080/tcp --permanent
    sudo firewall-cmd --reload
-   ```
-
-4. **Check if Fail2Ban UI process is running inside container:**
-   ```bash
+  ```
+4. Check whether the process is running inside the container:
+  ```bash
    podman exec -it fail2ban-ui ps aux | grep fail2ban-ui
-   ```
+  ```
+5. Verify the port configuration: check the `PORT` environment variable and the container logs for the actual listening port.
 
-5. **Verify port configuration:**
-   - Check if `PORT` environment variable is set correctly
-   - Check container logs for the actual port being used
+### No servers configured
 
-### No Servers Configured
+Symptoms: empty dashboard, no servers visible.
 
-**Symptoms:** Empty dashboard, no servers visible
+1. Go to **Settings → Manage Servers** in the web UI.
+2. Enable the **Local Connector** if Fail2Ban runs locally.
+3. Add a remote server over SSH or an API agent.
+4. Verify the server connection status.
 
-**Solutions:**
-1. Navigate to **Settings** → **Manage Servers** in the web UI
-2. Enable **Local Connector** (if Fail2Ban runs locally)
-3. Add remote server via SSH or API agent
-4. Verify server connection status
+### SSH connection issues
 
-### SSH Connection Issues
-
-**Symptoms:** Cannot connect to remote server
-
-**Solutions:**
-1. **Verify SSH key authentication works from the host:**
-   ```bash
+1. Verify that SSH key authentication works from the host:
+  ```bash
    ssh -i /opt/podman-fail2ban-ui/.ssh/your_key user@remote-host
-   ```
+  ```
+2. Verify the SSH user's permissions on the remote server:
+  - sudo access for `fail2ban-client` and `systemctl restart fail2ban` (via sudoers)
+  - filesystem ACLs on `/etc/fail2ban` for configuration file access
+  - see [docs/security.md](../../docs/security.md#ssh-connector-hardening) for the recommended service-account setup
+3. Check the key location: SSH keys belong in `/config/.ssh` inside the container, with permissions `600`.
+4. Enable debug mode under **Settings** for detailed error messages.
+5. Verify network connectivity: the container needs network access to the remote SSH servers. Check whether `--network=host` is in use, or configure the appropriate port mappings.
 
-2. **Ensure SSH user has proper permissions on remote server:**
-   - Sudo access for `fail2ban-client` and `systemctl restart fail2ban` (configured via sudoers)
-   - File system ACLs on `/etc/fail2ban` for configuration file access
-   - See the main README for recommended setup with service account and ACLs
+### Permission denied errors
 
-3. **Check SSH keys location:**
-   - SSH keys should be placed in `/config/.ssh` directory inside the container
-   - Verify key permissions (should be 600)
-
-4. **Enable debug mode:**
-   - Go to **Settings** → Enable debug mode for detailed error messages
-
-5. **Verify network connectivity:**
-   - The container needs network access to remote SSH servers
-   - Check if using `--network=host` or configure proper port mappings
-
-### Permission Denied Errors
-
-**Symptoms:** Permission errors when accessing Fail2Ban files
-
-**Solutions:**
-1. **Check SELinux context on volumes:**
-   ```bash
+1. Check the SELinux context on the volumes:
+  ```bash
    ls -Z /opt/podman-fail2ban-ui
    ls -Z /etc/fail2ban
-   ```
-
-2. **Apply correct SELinux context:**
-   ```bash
+  ```
+2. Apply the correct context if needed:
+  ```bash
    chcon -Rt container_file_t /opt/podman-fail2ban-ui
-   ```
+  ```
+3. Verify the mount flags: `:Z` for read/write volumes on SELinux systems, `:ro` for read-only volumes.
 
-3. **Verify volume mount flags:**
-   - Use `:Z` flag for read/write volumes on SELinux systems
-   - Use `:ro` flag for read-only volumes
+### Database errors
 
-### Database Errors
-
-**Symptoms:** Database-related errors in logs
-
-**Solutions:**
-1. **Check database file permissions:**
-   ```bash
+1. Check the database file permissions:
+  ```bash
    ls -la /opt/podman-fail2ban-ui/fail2ban-ui.db
-   ```
-
-2. **Verify database integrity:**
-   ```bash
+  ```
+2. Verify the database integrity:
+  ```bash
    podman exec -it fail2ban-ui sqlite3 /config/fail2ban-ui.db "PRAGMA integrity_check;"
-   ```
-
-3. **Backup and recreate if corrupted:**
-   ```bash
+  ```
+3. Back up before any recovery attempt:
+  ```bash
    cp /opt/podman-fail2ban-ui/fail2ban-ui.db /opt/podman-fail2ban-ui/fail2ban-ui.db.backup
-   ```
+  ```
 
----
+## Contact and support
 
-## Contact & Support
+- Issues, contributions, and feature requests: [GitHub Issues](https://github.com/swissmakers/fail2ban-ui/issues)
+- Enterprise support: [Swissmakers GmbH](https://swissmakers.ch)
 
-For issues, contributions, or feature requests, visit our GitHub repository:  
-🔗 [GitHub Issues](https://github.com/swissmakers/fail2ban-ui/issues)
-
-For enterprise support, visit:  
-🔗 [Swissmakers GmbH](https://swissmakers.ch)

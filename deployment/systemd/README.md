@@ -1,45 +1,54 @@
-# Fail2Ban-UI Systemd Setup
-This guide provides two methods to **run Fail2Ban-UI as a systemd service**.
-1. Systemd service that starts the local compiled binary.
-2. Systemd service that starts the fail2ban-ui container.
+# systemd deployment
 
-## For SELinux enabled systems (host Fail2Ban → UI callbacks)
+This guide describes two ways to run Fail2Ban UI as a systemd service:
 
-Fail2Ban runs ban/unban actions as `fail2ban_t`. The UI callback uses `curl` to POST to your configured URL (plain HTTP, HTTPS, or HTTPS behind a reverse proxy). On RHEL, Rocky, AlmaLinux, and similar distributions with the targeted policy, SELinux often denies that outbound TCP connection until you allow the network access the policy associates with this pattern.
+1. A service that starts a locally compiled binary.
+2. A service that starts the Fail2Ban UI container.
 
-**Recommended fix** (needs to be applied on every SELinux enabled fail2ban-host):
+## SELinux-enabled systems (host Fail2Ban → UI callbacks)
+
+Fail2Ban runs its ban and unban actions as `fail2ban_t`. The UI callback uses `curl` to POST to the configured URL, plain HTTP, HTTPS, or HTTPS behind a reverse proxy. On RHEL, Rocky Linux, AlmaLinux, and similar distributions with the targeted policy, SELinux often denies that outbound TCP connection until the corresponding network access is allowed.
+
+Recommended fix, to be applied on **every** SELinux-enabled Fail2Ban host:
 
 ```bash
 sudo setsebool -P nis_enabled 1
 ```
 
-This uses a already integrated distribution boolean; it is always preferable to maintaining a one-off `audit2allow` module. If your security team forbids that boolean, work with them on an approved exception (custom policy), never disable SELinux entirely!
+This uses a boolean already shipped by the distribution, which is preferable to maintaining a one-off `audit2allow` module. If your security team forbids the boolean, work with them on an approved exception (a custom policy). Do not disable SELinux entirely.
 
-For **containerized** Fail2Ban UI (Podman/Docker) talking to the host Fail2Ban socket and logs, separate optional modules may still be required; see [`deployment/container/README.md`](../container/README.md#selinux-configuration).
+**Note:** A *containerized* Fail2Ban UI (Podman/Docker) talking to the host Fail2Ban socket and logs may additionally require the optional modules described in [deployment/container/README.md](../container/README.md#selinux-configuration). That is a separate concern.
 
-## Build and running Fail2Ban-UI from Local Source Code
-In this case we will run **Fail2Ban-UI from `/opt/fail2ban-ui/`** using systemd.
+## Option 1: Run the compiled binary
+
+This option runs Fail2Ban UI from `/opt/fail2ban-ui/` under systemd.
 
 ### Prerequisites
-Install **Go 1.25+** and required dependencies:
-  ```bash
-  sudo dnf install -y golang git jq
-  ```
-> **Note:** A local Fail2ban installation is optional. Fail2Ban-UI can manage remote Fail2ban servers via SSH or API agents without requiring a local Fail2ban installation.
 
-Clone the repository to `/opt/fail2ban-ui`:
-  ```bash
-  sudo git clone https://github.com/swissmakers/fail2ban-ui.git /opt/fail2ban-ui
-  cd /opt/fail2ban-ui
-  ./build-tailwind.sh
-  sudo go build -o fail2ban-ui ./cmd/server/main.go
-  ```
+Install Go 1.25 or later and the required dependencies:
 
-Web UI templates, translation JSON files, and `pkg/web/static` are embedded into the binary at compile time, so you only need to ship the `fail2ban-ui` executable (plus a writable `WorkingDirectory` for the SQLite database).
+```bash
+sudo dnf install -y golang git jq
+```
 
-### Create the fail2ban-ui.service
-Save this file as `/etc/systemd/system/fail2ban-ui.service`:
-For production deployments, please use a dedicated service account instead of root.
+**Note:** A local Fail2Ban installation is optional. Fail2Ban UI can manage remote Fail2Ban servers over SSH or API agents without a local instance.
+
+### Build
+
+Clone the repository and build:
+
+```bash
+sudo git clone https://github.com/swissmakers/fail2ban-ui.git /opt/fail2ban-ui
+cd /opt/fail2ban-ui
+./build-tailwind.sh
+sudo go build -o fail2ban-ui ./cmd/server/main.go
+```
+
+The web templates, translation JSON files, and `pkg/web/static` are embedded into the binary at compile time. Only the `fail2ban-ui` executable needs to be shipped, plus a writable `WorkingDirectory` for the SQLite database.
+
+### Create the unit file
+
+Save the following as `/etc/systemd/system/fail2ban-ui.service`. For production deployments, use a dedicated service account instead of root.
 
 ```ini
 [Unit]
@@ -59,80 +68,65 @@ Group=root
 WantedBy=multi-user.target
 ```
 
-### Start & Enable the Service
-1. Reload systemd to detect our new service:
-   ```bash
-   sudo systemctl daemon-reload
-   ```
-2. Enable and start the service:
-   ```bash
-   sudo systemctl enable fail2ban-ui.service --now
-   ```
-3. Check the status:
-   ```bash
-   sudo systemctl status fail2ban-ui.service
-   ```
+### Enable and start the service
 
-### View Logs
-To see the real-time logs of Fail2Ban-UI:
 ```bash
-sudo journalctl -u fail2ban-ui.service -f
+sudo systemctl daemon-reload
+sudo systemctl enable fail2ban-ui.service --now
+sudo systemctl status fail2ban-ui.service
 ```
 
-### Restart or Stop
-Restart:
+### Operate the service
+
 ```bash
-sudo systemctl restart fail2ban-ui.service
-```
-Stop:
-```bash
-sudo systemctl stop fail2ban-ui.service
+sudo journalctl -u fail2ban-ui.service -f   # follow logs
+sudo systemctl restart fail2ban-ui.service  # restart
+sudo systemctl stop fail2ban-ui.service     # stop
 ```
 
-### First Launch & Server Configuration
-After starting the service, access the web interface at `http://localhost:8080` (or your configured port).
+### First launch and server configuration
 
-**Important:** On first launch, you need to:
-1. **Enable the local connector** (if Fail2ban runs on the same host), OR
-2. **Add a remote server** via SSH connection
+After starting the service, open the web interface at `http://localhost:8080` (or your configured port).
 
-Go to **Settings** → **Manage Servers** in the web UI to configure your first Fail2ban server.
+**Important:** On first launch you must either enable the **local connector** (if Fail2Ban runs on the same host) or add a **remote server** over SSH. Go to **Settings → Manage Servers** to configure the first Fail2Ban server.
 
-**Configure Settings:**
-- **Fail2Ban Callback URL**: URL where Fail2Ban instances send ban alerts (auto-updates with port changes)
-- **Callback URL Secret**: Auto-generated 42-character secret for API authentication (viewable in Settings with show/hide toggle)
-- **GeoIP Provider**: Choose between MaxMind (local database) or Built-in (ip-api.com)
-- **Maximum Log Lines**: Configure how many log lines to include in ban notifications (default: 50)
-- Set up email alerts and set alert countries
-- Configure language preferences
+Then review the settings:
 
-The UI uses an embedded SQLite database (`fail2ban-ui.db`) to store all server configurations and ban events. This database is automatically created in the working directory.
+- **Fail2Ban Callback URL**: the URL Fail2Ban instances use to send ban alerts. It auto-updates with port changes when the default localhost pattern is in use.
+- **Callback URL Secret**: an auto-generated 42-character secret for callback authentication, viewable in the settings with a show/hide toggle.
+- **GeoIP Provider**: MaxMind (local database) or Built-in (ip-api.com).
+- **Maximum Log Lines**: the number of log lines included in ban notifications (default: 50).
+- Email alerts and alert countries.
+- Language preferences.
 
-## Running Fail2Ban-UI as a (Systemd controlled) Container
+The UI uses an embedded SQLite database (`fail2ban-ui.db`) for all server configurations and ban events. It is created automatically in the working directory.
 
-This method runs Fail2Ban-UI as a **containerized service** with **automatic startup** and handling through systemd.
+## Option 2: Run the container under systemd
+
+This option runs Fail2Ban UI as a containerized service with automatic startup managed by systemd.
 
 ### Prerequisites
 
-- Ensure **Podman** or **Docker** is installed.
+Podman or Docker must be installed.
 
-For **Podman**:
 ```bash
+# Podman:
 sudo dnf install -y podman
-```
-For **Docker** (if preferred):
-```bash
+
+# Docker (if preferred):
 sudo dnf install -y docker
 sudo systemctl enable --now docker
 ```
 
-Create the needed folder to store the fail2ban-ui config:
+Create the configuration directory:
+
 ```bash
 sudo mkdir /opt/podman-fail2ban-ui
 ```
 
-### Create the fail2ban-ui-container.service
-Save this file as `/etc/systemd/system/fail2ban-ui-container.service`:
+### Create the unit file
+
+Save the following as `/etc/systemd/system/fail2ban-ui-container.service`:
 
 ```ini
 [Unit]
@@ -156,20 +150,18 @@ RestartSec=10s
 WantedBy=multi-user.target
 ```
 
-### For SELinux enabled systems
-If SELinux is enabled, you must apply the required SELinux policies to allow the container to communicate with Fail2Ban.
-The policies are located here: "`../container/SELinux/`"
+### SELinux-enabled systems
 
-Apply the prebuilt SELinux Modules with:
+With SELinux enabled, apply the policies that allow the container to communicate with Fail2Ban. The policies are located in `[../container/SELinux/](../container/SELinux/)`.
+
+Install the pre-built modules:
 
 ```bash
 semodule -i fail2ban-container-ui.pp
 semodule -i fail2ban-container-client.pp
 ```
 
-#### Manually Compile and Install SELinux Rules
-
-If you want to change or compile the SELinux rules by yourself run:
+To modify or rebuild the rules yourself:
 
 ```bash
 checkmodule -M -m -o fail2ban-container-client.mod fail2ban-container-client.te
@@ -177,39 +169,24 @@ semodule_package -o fail2ban-container-client.pp -m fail2ban-container-client.mo
 semodule -i fail2ban-container-client.pp
 ```
 
+### Enable and start the service
 
-### Start & Enable the Container Service
-1. Reload systemd to detect the new service:
-   ```bash
-   sudo systemctl daemon-reload
-   ```
-2. Enable and start the containerized service:
-   ```bash
-   sudo systemctl enable --now fail2ban-ui-container.service
-   ```
-3. Check the status:
-   ```bash
-   sudo systemctl status fail2ban-ui-container.service
-   ```
-
-### View Logs
 ```bash
-sudo journalctl -u fail2ban-ui-container.service -f
+sudo systemctl daemon-reload
+sudo systemctl enable --now fail2ban-ui-container.service
+sudo systemctl status fail2ban-ui-container.service
 ```
 
-### Restart or Stop
-Restart:
+### Operate the service
+
 ```bash
-sudo systemctl restart fail2ban-ui-container.service
-```
-Stop:
-```bash
-sudo systemctl stop fail2ban-ui-container.service
+sudo journalctl -u fail2ban-ui-container.service -f   # follow logs
+sudo systemctl restart fail2ban-ui-container.service  # restart
+sudo systemctl stop fail2ban-ui-container.service     # stop
 ```
 
-## **Contact & Support**
-For issues, visit our GitHub repository:  
-🔗 [GitHub Issues](https://github.com/swissmakers/fail2ban-ui/issues)  
+## Contact and support
 
-For enterprise support:  
-🔗 [Swissmakers GmbH](https://swissmakers.ch)
+- Issues, contributions, and feature requests: [GitHub Issues](https://github.com/swissmakers/fail2ban-ui/issues)
+- Enterprise support: [Swissmakers GmbH](https://swissmakers.ch)
+

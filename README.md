@@ -1,55 +1,61 @@
 # Fail2Ban UI
 
-
-<div align="center">
-
-**Enterprise-Grade Intrusion Detection System Management Platform**
-
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://golang.org/)
 [![Platform](https://img.shields.io/badge/Platform-Linux-lightgrey)](https://www.linux.org/)
 
-*Swissmade open-source solution for centralized Fail2Ban management across distributed infrastructure*
-
-[Quick Start](#quick-start-container) • [Documentation](#documentation) • [Configuration Reference](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/configuration.md) • [Screenshots](#screenshots)
-
-</div>
-
-Fail2Ban UI is a management platform for operating Fail2Ban across one or more Linux hosts. It provides a central place to review bans, search and unban IPs, manage jails and filters, and receive notifications.
+Fail2Ban UI is a web interface for operating Fail2Ban across one or more Linux hosts. It provides a central place to review bans, search and unban IP addresses, manage jails and filters, and receive notifications.
 
 The project is maintained by Swissmakers GmbH and released under GPL-3.0.
 
+[Quick start](#quick-start-container) • [Documentation](#documentation) • [Configuration reference](docs/configuration.md) • [Architecture](docs/architecture.md) • [Screenshots](#screenshots)
+
 ## What this project does
 
-Fail2Ban UI does not replace Fail2Ban. It connects to existing Fail2Ban instances and adds:
+Fail2Ban UI does not replace Fail2Ban. Ban decisions are still made by the Fail2Ban daemon on each host. The UI connects to existing instances and adds:
 
-- Dashboard for active jails and recent ban/unban activity with real-time WebSocket updates
-- Server manager for local, SSH, and agent-managed Fail2Ban instances
-- Centralized search, ban, and unban operations across jails and servers
-- Remote jail/filter configuration management (connector-dependent)
-- Filter debug and live log-pattern testing
-- Ban insights with an interactive 3D globe by country
-- Advanced recurring-offender actions (MikroTik, pfSense, OPNsense)
-- Persistent event and permanent-block data management
-- Configurable alerts (Email/SMTP, Webhook, Elasticsearch) with GeoIP/Whois enrichment
-- Optional OIDC login (Keycloak, Authentik, Pocket-ID)
-- Least-privilege, SELinux-aware deployment patterns
+* A dashboard of active jails and recent ban/unban activity, updated in real time over WebSocket
+* A server manager for local, SSH-connected, and agent-connected Fail2Ban instances
+* Search, ban, and unban operations across all jails and servers
+* Remote jail and filter configuration management (depending on connector capabilities)
+* Filter debugging with live log-pattern testing
+* Ban insights, including country-level analytics on an interactive 3D globe
+* Recurring-offender handling with permanent blocks on MikroTik, pfSense, and OPNsense
+* Persistent event history and permanent-block records, with data management built in
+* Configurable alerts over Email (SMTP), Webhook, and Elasticsearch, with GeoIP/Whois enrichment and country filtering
+* Optional OIDC login (Keycloak, Authentik, Pocket-ID)
+* Least-privilege, SELinux-aware deployment patterns
+
+## How it works
+
+The UI runs as a single Go binary, in a container or as a systemd service. Two independent data paths connect it to the managed hosts:
+
+* **Control path** (blue) - Fail2ban UI manages each Fail2Ban instance through one of three connectors (see below): reading jail status, banning and unbanning, editing configuration, restarting the service.
+* **Event path** (green) - a custom Fail2Ban action on each host posts every ban and unban event back to the UI over HTTP, authenticated by a shared callback secret. The UI stores the event, broadcasts it to connected browsers, and triggers alerts and advanced actions.
+
+[![Architecture-Diagram](docs/diagrams/architecture.drawio.png)](docs/diagrams/architecture.drawio.png)
+
+See [docs/architecture.md](docs/architecture.md) for the data-flow description.
 
 ## Connector types
 
 | Connector | Typical use | Notes |
-|---|---|---|
-| Local | Fail2Ban runs on the same host as the UI | Uses the Fail2Ban socket and local files |
-| SSH | Manage remote Fail2Ban hosts without installing an agent | Uses key-based SSH and remote `fail2ban-client` |
-| Agent | Environments where SSH is not desired | HTTP agent runs on the Fail2ban host; see [`fail2ban-ui-agent`](https://github.com/swissmakers/fail2ban-ui-agent) and the prebuilt image [`swissmakers/fail2ban-ui-agent`](https://hub.docker.com/r/swissmakers/fail2ban-ui-agent) |
+|-----------|-------------|-------|
+| Local | Fail2Ban runs on the same host as the UI | Uses the Fail2Ban Unix socket and local files |
+| SSH | Manage remote hosts without installing an agent | Key-based SSH and remote `fail2ban-client`; requires a dedicated service account with minimal sudo rules |
+| Agent | Environments where SSH from the UI host is not desired | HTTP agent runs on the Fail2Ban host; see [fail2ban-ui-agent](https://github.com/swissmakers/fail2ban-ui-agent) and the prebuilt image [swissmakers/fail2ban-ui-agent](https://hub.docker.com/r/swissmakers/fail2ban-ui-agent) |
 
 ## Quick start (container)
 
-Prerequisites:
-- A Linux host with Podman or Docker
-- If you manage a local Fail2Ban instance: access to `/etc/fail2ban` and `/var/run/fail2ban` is needed by Fail2ban-UI
+### Prerequisites
 
-Procedure (local connector example):
+* A Linux host with Podman or Docker
+* For a local Fail2Ban instance: access to `/etc/fail2ban` and `/var/run/fail2ban` from the container
+
+### Procedure
+
+Run the container with the local connector:
+
 ```bash
 podman run -d --name fail2ban-ui --network=host \
   -v /opt/fail2ban-ui:/config:Z \
@@ -57,51 +63,62 @@ podman run -d --name fail2ban-ui --network=host \
   -v /var/run/fail2ban:/var/run/fail2ban \
   -v /var/log:/var/log:ro \
   swissmakers/fail2ban-ui:latest
-````
+```
 
-Verification:
+### Verification
 
-* Open `http://localhost:8080`
-* In the UI: Settings → Manage Servers → enable "Local connector” and run "Test connection”
+1. Open `http://localhost:8080`.
+2. In the UI, go to **Settings → Manage Servers**, enable the local connector, and click **Test connection**.
 
-Next steps:
+### Next steps
 
-* For Compose, systemd, SELinux, and remote connectors, see the documentation links below.
+For Compose, systemd, SELinux, and the remote connectors, see the documentation below.
 
 ## Documentation
 
-* Installation: [`docs/installation.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/installation.md)
-* Configuration reference (env vars, callback URL/secret, OIDC): [`docs/configuration.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/configuration.md)
-* Reverse proxy guide: [`docs/reverse-proxy.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/reverse-proxy.md)
-* Webhook integration guide: [`docs/webhooks.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/webhooks.md)
-* Security guidance (recommended deployment posture): [`docs/security.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/security.md)
-* Architecture overview: [`docs/architecture.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/architecture.md)
-* API reference: [`docs/api.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/api.md)
-* Alert providers (Email, Webhook, Elasticsearch): [`docs/alert-providers.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/alert-providers.md)
-* Threat intelligence (AlienVault OTX / AbuseIPDB): [`docs/threat-intel.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/threat-intel.md)
-* Troubleshooting: [`docs/troubleshooting.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/troubleshooting.md)
+* [Installation](docs/installation.md)
+* [Configuration reference](docs/configuration.md) - environment variables, callback URL and secret, OIDC
+* [Architecture overview](docs/architecture.md)
+* [Reverse proxy guide](docs/reverse-proxy.md)
+* [Security guidance](docs/security.md) - recommended deployment posture
+* [Alert providers](docs/alert-providers.md) - Email, Webhook, Elasticsearch
+* [Threat intelligence](docs/threat-intel.md) - AlienVault OTX, AbuseIPDB
+* [Webhook integration guide](docs/webhooks.md)
+* [API reference](docs/api.md)
+* [Troubleshooting](docs/troubleshooting.md)
 
-Existing deployment guides in this repository:
+Deployment guides in this repository:
 
-* Container: [`deployment/container/README.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/deployment/container/README.md)
-* systemd: [`deployment/systemd/README.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/deployment/systemd/README.md)
-* Optional container SELinux modules (socket/log access): [`deployment/container/SELinux/`](https://github.com/swissmakers/fail2ban-ui/blob/main/deployment/container/SELinux/) — host Fail2Ban `curl` callbacks often need the `nis_enabled` boolean instead; see [`docs/security.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/security.md#selinux)
+* Container: [deployment/container/README.md](deployment/container/README.md)
+* systemd: [deployment/systemd/README.md](deployment/systemd/README.md)
+* Optional container SELinux modules (socket/log access): [deployment/container/SELinux/](deployment/container/SELinux/) - host-side Fail2Ban `curl` callbacks often need the `nis_enabled` boolean instead; see [docs/security.md](docs/security.md#selinux)
 
-Development / testing stacks:
-* OIDC dev stack: [`development/oidc/README.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/development/oidc/README.md)
-* SSH and local connector dev stack: [`development/ssh_and_local/README.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/development/ssh_and_local/README.md)
+Development and testing stacks:
 
-Remote Fail2ban **agent** (separate component):
-* Source: [`github.com/swissmakers/fail2ban-ui-agent`](https://github.com/swissmakers/fail2ban-ui-agent)
-* Container image: [`hub.docker.com/r/swissmakers/fail2ban-ui-agent`](https://hub.docker.com/r/swissmakers/fail2ban-ui-agent)
+* OIDC dev stack: [development/oidc/README.md](development/oidc/README.md)
+* SSH and local connector dev stack: [development/ssh_and_local/README.md](development/ssh_and_local/README.md)
+
+## Security notes
+
+Think before exposing the UI:
+
+* Do not expose your Fail2ban-UI directly to the public Internet. Place it behind a reverse proxy, VPN, or firewall rules, and enable OIDC where possible.
+* The SSH connector should use a dedicated service account with minimal sudo permissions and ACLs - at minimum `sudo fail2ban-client *` and `sudo systemctl restart fail2ban`.
+* All IP addresses are validated with strict IPv4/IPv6/CIDR parsing before they reach any integration or command, which prevents command injection.
+* WebSocket connections are protected by same-origin validation and require authentication when OIDC is enabled.
+* For production proxy examples and WebSocket requirements, see [docs/reverse-proxy.md](docs/reverse-proxy.md).
+
+See [docs/security.md](docs/security.md) for details.
 
 ## Screenshots
 
 A set of screenshots is available in `screenshots/`
 
-### Main Dashboard
-![Dashboard](screenshots/0_Dashboard.png)
-The main dashboard view showing an overview of all active jails, banned IPs, and real-time statistics. Displays total bans, recent activity, and quick access to key features.
+### Main dashboard
+
+[![Dashboard](screenshots/0_Dashboard.png)](screenshots/0_Dashboard.png)
+
+Overview of all active jails, banned IPs, and real-time statistics, total bans, recent activity, and quick access to the main features.
 
 #### Unban IP
 ![Unban IP](screenshots/0.1_Dashboard_unban_IP.png)
@@ -133,7 +150,7 @@ The second button opens the jail creation modal for setting up new jails. It sup
 
 ### Search Functionality
 ![Search](screenshots/1.6_Dashboard_search.png)
-Search for a specific IPs, that where blocked in a specific jail - searches in all active jails. Provides a quick and painless filtering.
+Search for a specific IPs, that where blocked in a specific jail, searches in all active jails. Provides a quick and painless filtering.
 
 ### Internal Log Overview
 ![Log Overview](screenshots/2_Dashboard_Log_Overview.png)
@@ -163,27 +180,23 @@ Main settings page with sections for different configuration categories includin
 ![Debug Console](screenshots/4.1_Settings_DebugConsole.png)
 When enabled the Debug console  showing real-time application logs, system messages, and debugging information. Useful for troubleshooting and monitoring without the need to query the container logs manually everytime.
 
-#### Advanced Ban Actions
-![Advanced Ban Actions](screenshots/4.2_Settings_AdvancedBanActions.png)
-Configuration for advanced ban actions including permanent blocking, firewall integrations (Mikrotik, pfSense, OPNsense), and threshold settings for recurring offenders.
+#### Advanced ban actions
 
-#### Alert Settings
-![Alert Settings](screenshots/4.3_Settings_AlertSettings.png)
-Alert configuration supporting three providers: Email (SMTP), Webhook, and Elasticsearch. Includes country-based filtering, GeoIP provider selection, and per-event toggles for bans and unbans. See [`docs/alert-providers.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/alert-providers.md) for details.
+[![Advanced Ban Actions](screenshots/4.2_Settings_AdvancedBanActions.png)](screenshots/4.2_Settings_AdvancedBanActions.png)
 
-#### Global Settings
-![Global Settings](screenshots/4.4_Settings_GlobalSettings.png)
-Global Fail2Ban settings including default bantime, findtime, maxretry, banaction configuration (nftables/firewalld/iptables) and so on.
+Permanent blocking, firewall integrations (MikroTik, pfSense, OPNsense), and recurring-offender thresholds.
 
-## Security notes (think before exposing the UI)
+#### Alert settings
 
-* Do not expose the UI directly to the public Internet. Put it behind a reverse proxy, VPN, firewall rules, and/or OIDC.
-* SSH connector should use a dedicated service account with minimal sudo permissions and ACLs (at minimum `sudo fail2ban-client *` and `sudo systemctl restart fail2ban`).
-* All IP addresses are validated (strict IPv4/IPv6/CIDR parsing) before being passed to any integration or command, preventing command injection.
-* WebSocket connections are protected by origin validation (same-origin only) and require authentication when OIDC is enabled.
-* For production proxy examples and WebSocket requirements, see [`docs/reverse-proxy.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/reverse-proxy.md).
+[![Alert Settings](screenshots/4.3_Settings_AlertSettings.png)](screenshots/4.3_Settings_AlertSettings.png)
 
-See [`docs/security.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/docs/security.md) for details.
+Three alert providers, Email (SMTP), Webhook, and Elasticsearch, with country filtering, GeoIP provider selection, and per-event toggles. See [docs/alert-providers.md](docs/alert-providers.md).
+
+#### Global settings
+
+[![Global Settings](screenshots/4.4_Settings_GlobalSettings.png)](screenshots/4.4_Settings_GlobalSettings.png)
+
+Global Fail2Ban defaults: `bantime`, `findtime`, `maxretry`, and the `banaction` backend (nftables, firewalld, iptables).
 
 ## Contributing
 
@@ -191,12 +204,10 @@ Documentation and deployment guidance in security tooling is never "done", and e
 
 If you see a clearer way to describe installation steps, safer container defaults, better reverse-proxy examples, SELinux improvements, or a more practical demo environment, please contribute. Small improvements (typos, wording, examples) are just as valuable as code changes.
 
-Want to add a new UI language? Copy `pkg/web/locales/en.json`, translate all values, save it as `pkg/web/locales/<lang>.json`, and open a pull request.
-Please use a proper lowercase locale short code for `<lang>` (for example `ch`, `ch_de`, `es`, or `pt_br`).
+To add a UI language: copy `pkg/web/locales/en.json`, translate all values, save it as `pkg/web/locales/<lang>.json`, and open a pull request. Use a lowercase locale code for `<lang>`, for example `ch`, `ch_de`, `es`, or `pt_br`.
 
-
-See [`CONTRIBUTING.md`](https://github.com/swissmakers/fail2ban-ui/blob/main/CONTRIBUTING.md) for more info.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## License
 
-GPL-3.0. See `LICENSE`.
+GPL-3.0. See [LICENSE](LICENSE).
