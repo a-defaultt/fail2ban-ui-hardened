@@ -11,6 +11,7 @@ The application consists of the following parts:
 - Optional integrations: alert providers, GeoIP/Whois enrichment, and edge firewall actions
 
 Fail2Ban UI system architecture
+[![Architecture-Diagram](diagrams/architecture.drawio.png)](diagrams/architecture.drawio.png)
 
 ## Design principles
 
