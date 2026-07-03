@@ -136,7 +136,7 @@ func GetOIDCClient() *OIDCClient {
 }
 
 func IsEnabled() bool {
-	return oidcClient != nil && oidcClient.Config != nil && oidcClient.Config.Enabled
+	return (oidcClient != nil && oidcClient.Config != nil && oidcClient.Config.Enabled) || IsLocalAuthEnabled()
 }
 
 func GetConfig() *config.OIDCConfig {

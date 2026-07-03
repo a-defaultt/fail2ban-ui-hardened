@@ -55,7 +55,7 @@ func main() {
 		log.Fatalf("failed to initialise fail2ban connectors: %v", err)
 	}
 
-	// Initialize OIDC authentication
+	// Initialize OIDC or local authentication
 	oidcConfig, err := config.GetOIDCConfigFromEnv()
 	if err != nil {
 		log.Fatalf("failed to load OIDC configuration: %v", err)
@@ -68,6 +68,13 @@ func main() {
 			log.Fatalf("failed to initialize OIDC: %v", err)
 		}
 		log.Println("OIDC authentication enabled")
+	} else {
+		if err := auth.InitializeLocalAuth(); err != nil {
+			log.Fatalf("failed to initialize local authentication: %v", err)
+		}
+		if auth.IsLocalAuthEnabled() {
+			log.Printf("Local authentication enabled for user: %s", auth.GetLocalUsername())
+		}
 	}
 
 	// Set Gin mode
@@ -78,7 +85,16 @@ func main() {
 	}
 
 	// Initialize router
-	router := gin.Default()
+	// Use gin.New() instead of gin.Default() to avoid logging sensitive request paths.
+	router := gin.New()
+	router.Use(gin.Recovery()) // Keep panic recovery
+
+	// [FIX C1] Disable X-Forwarded-For trust to prevent rate-limiter bypass via IP spoofing.
+	// Only set trusted proxies explicitly if running behind a known reverse proxy.
+	if err := router.SetTrustedProxies(nil); err != nil {
+		log.Fatalf("failed to set trusted proxies: %v", err)
+	}
+
 	serverPort := strconv.Itoa(int(settings.Port))
 	bindAddress, _ := config.GetBindAddressFromEnv()
 	serverAddr := net.JoinHostPort(bindAddress, serverPort)
@@ -111,9 +127,13 @@ func main() {
 	}
 	log.Printf("Server listening on %s:%s.\n", bindAddress, serverPort)
 
+	// [FIX C3] Set server timeouts to defend against Slowloris and resource exhaustion.
 	server := &http.Server{
-		Addr:    serverAddr,
-		Handler: web.StripBasePathHandler(router),
+		Addr:         serverAddr,
+		Handler:      web.StripBasePathHandler(router),
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Could not start server: %v\n", err)

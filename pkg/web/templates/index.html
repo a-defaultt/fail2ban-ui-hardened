@@ -182,7 +182,7 @@
   <div id="loginPage" class="hidden min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
     <div class="max-w-md w-full">
       <div class="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
-        <div class="text-center mb-8">
+        <div class="text-center mb-6">
           <div class="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-blue-600 mb-4">
             <svg class="h-10 w-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
@@ -191,6 +191,7 @@
           <h2 class="text-3xl font-bold text-gray-900 mb-2" data-i18n="auth.login_title">Sign in to Fail2ban UI</h2>
           <p class="text-sm text-gray-600" data-i18n="auth.login_description">Please authenticate to access the management interface</p>
         </div>
+        
         <div id="loginError" class="hidden bg-red-50 border-l-4 border-red-400 text-red-700 px-4 py-3 rounded mb-6">
           <div class="flex">
             <div class="flex-shrink-0">
@@ -203,8 +204,10 @@
             </div>
           </div>
         </div>
-        <div class="mb-6">
-          <button type="button" onclick="handleLogin()" class="w-full flex justify-center items-center py-3 px-4 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
+
+        <!-- OIDC Login Section -->
+        <div id="oidcLoginContainer" class="hidden mb-6">
+          <button type="button" onclick="handleLogin(event)" class="w-full flex justify-center items-center py-3 px-4 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
             <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path>
             </svg>
@@ -217,9 +220,39 @@
             </div>
           </div>
         </div>
+
+        <!-- Local Form Login Section -->
+        <div id="localLoginContainer" class="hidden mb-6">
+          <form id="localLoginForm" onsubmit="handleLocalLogin(event)" class="space-y-4">
+            <div>
+              <label for="usernameInput" class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+              <input type="text" id="usernameInput" name="username" autocomplete="username" required
+                     class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-colors"
+                     placeholder="Enter username">
+            </div>
+            <div>
+              <label for="current-password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <div class="relative">
+                <input type="password" id="current-password" name="password" autocomplete="current-password" required
+                       class="w-full pl-3 pr-10 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-colors"
+                       placeholder="••••••••">
+                <button type="button" onclick="togglePasswordVisibility()" class="absolute inset-y-0 right-0 pr-3 flex items-center text-sm text-gray-500 hover:text-gray-700 focus:outline-none" aria-label="Toggle password visibility">
+                  <i class="fas fa-eye" id="passwordToggleIcon"></i>
+                </button>
+              </div>
+            </div>
+            <div class="pt-2">
+              <button type="submit" id="localLoginSubmitBtn" class="w-full flex justify-center items-center py-2.5 px-4 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
+                <span id="localLoginBtnText">Sign In</span>
+                <div id="localLoginSpin" class="hidden h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin ml-2"></div>
+              </button>
+            </div>
+          </form>
+        </div>
+
         <div class="pt-6 border-t border-gray-200">
-          <p class="text-xs text-center text-gray-500">
-            Secure authentication via OpenID Connect
+          <p class="text-xs text-center text-gray-500" id="authMethodText">
+            Secure authentication
           </p>
         </div>
       </div>

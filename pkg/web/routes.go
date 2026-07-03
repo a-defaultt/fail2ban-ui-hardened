@@ -27,10 +27,14 @@ import (
 func RegisterRoutes(r *gin.Engine, hub *Hub) {
 	SetWebSocketHub(hub)
 
+	// [FIX C2] Apply security headers to all responses
+	r.Use(SecurityHeadersMiddleware())
+
 	// Public routes; do not require authentication
 	authRoutes := r.Group("/auth")
 	{
 		authRoutes.GET("/login", LoginHandler)
+		authRoutes.POST("/login", LocalLoginHandler)
 		authRoutes.GET("/callback", CallbackHandler)
 		authRoutes.GET("/logout", LogoutHandler)
 		authRoutes.GET("/status", AuthStatusHandler)

@@ -115,6 +115,7 @@ func CreateSession(w http.ResponseWriter, r *http.Request, userInfo *UserInfo, m
 
 	isSecure := r != nil && (r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https")
 
+	// [FIX H2] Use SameSite=Strict for an admin panel — Lax permits cross-site top-level navigation.
 	cookie := &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    encrypted,
@@ -122,7 +123,7 @@ func CreateSession(w http.ResponseWriter, r *http.Request, userInfo *UserInfo, m
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   isSecure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 	}
 
 	http.SetCookie(w, cookie)
@@ -164,7 +165,7 @@ func DeleteSession(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   isSecure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 	}
 	http.SetCookie(w, cookie)
 }

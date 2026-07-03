@@ -4160,7 +4160,11 @@ func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 func LoginHandler(c *gin.Context) {
 	oidcClient := auth.GetOIDCClient()
 	if oidcClient == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OIDC authentication is not configured"})
+		if auth.IsLocalAuthEnabled() {
+			renderIndexPage(c)
+			return
+		}
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Authentication is not configured"})
 		return
 	}
 	oidcConfig := auth.GetConfig()
@@ -4225,6 +4229,62 @@ func LoginHandler(c *gin.Context) {
 		return
 	}
 	renderIndexPage(c)
+}
+
+type LocalLoginRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+}
+
+// Handles local username/password login submission.
+func LocalLoginHandler(c *gin.Context) {
+	if !auth.IsLocalAuthEnabled() {
+		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Local authentication is not enabled"})
+		return
+	}
+
+	var req LocalLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Username and password are required"})
+		return
+	}
+
+	clientIP := c.ClientIP()
+	ok, errMsg, err := auth.CheckCredentials(req.Username, req.Password, clientIP)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": errMsg})
+		return
+	}
+
+	// Create a session for the user
+	userInfo := &auth.UserInfo{
+		ID:       "local_admin",
+		Email:    auth.GetLocalUsername() + "@fail2ban-ui.local",
+		Name:     "Local Admin",
+		Username: auth.GetLocalUsername(),
+	}
+
+	maxAge := auth.GetLocalSessionMaxAge()
+	err = auth.CreateSession(c.Writer, c.Request, userInfo, maxAge)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"user": gin.H{
+			"id":       userInfo.ID,
+			"email":    userInfo.Email,
+			"name":     userInfo.Name,
+			"username": userInfo.Username,
+		},
+	})
 }
 
 // Handles the OIDC callback, exchanging the code for a session.
@@ -4345,6 +4405,11 @@ func AuthStatusHandler(c *gin.Context) {
 		return
 	}
 
+	authMethod := "local"
+	if auth.GetOIDCClient() != nil {
+		authMethod = "oidc"
+	}
+
 	oidcConfig := auth.GetConfig()
 	skipLoginPage := false
 	if oidcConfig != nil {
@@ -4353,6 +4418,9 @@ func AuthStatusHandler(c *gin.Context) {
 
 	session, err := auth.GetSession(c.Request)
 	if err != nil {
+		// [FIX M1] Do NOT expose authMethod to unauthenticated callers.
+		// The frontend template already has data-oidc-enabled on the body tag.
+		// authMethod is only returned to authenticated sessions.
 		c.JSON(http.StatusOK, gin.H{
 			"enabled":       true,
 			"authenticated": false,
@@ -4365,6 +4433,7 @@ func AuthStatusHandler(c *gin.Context) {
 		"enabled":       true,
 		"authenticated": true,
 		"skipLoginPage": skipLoginPage,
+		"authMethod":    authMethod, // safe to expose after authentication is confirmed
 		"user": gin.H{
 			"id":       session.UserID,
 			"email":    session.Email,

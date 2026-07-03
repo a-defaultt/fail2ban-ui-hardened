@@ -58,34 +58,26 @@ async function checkAuthStatus() {
         showAuthenticatedUI();
       } else {
         // Not authenticated
-        if (skipLoginPageFlag) {
+        // authMethod is only in the response when authenticated; fall back to body attribute
+        const method = data.authMethod || (document.body.getAttribute('data-oidc-enabled') === 'true' ? 'oidc' : 'local');
+        if (skipLoginPageFlag && method === 'oidc') {
           window.location.href = appPath('/auth/login');
           return { enabled: authEnabled, authenticated: false, user: null };
         } else {
-          // Show login page, hide main content
-          showLoginPage();
+          showLoginPage(method);
         }
       }
     } else {
-      // OIDC not enabled: show main content, hide login page
+      // Auth not enabled: show main content
       showMainContent();
     }
 
     return { enabled: authEnabled, authenticated: isAuthenticated, user: currentUser };
   } catch (error) {
     console.error('Error checking auth status:', error);
-    const oidcEnabled = document.body.getAttribute('data-oidc-enabled') === 'true';
-    const skipLoginPage = document.body.getAttribute('data-skip-login-page') === 'true';
-
-    if (oidcEnabled) {
-      if (skipLoginPage) {
-        window.location.href = appPath('/auth/login');
-      } else {
-        showLoginPage();
-      }
-    } else {
-      showMainContent();
-    }
+    // [FIX M4] Do NOT silently show a login form when the server is unreachable.
+    // Show an explicit error state so the user knows the server is down.
+    showServerError(error.message);
     return { enabled: false, authenticated: false, user: null };
   }
 }
@@ -94,11 +86,12 @@ async function checkAuthStatus() {
 //  Handle Login and Logout
 // =========================================================================
 
-function handleLogin() {
+// [FIX L1] Accept event explicitly — do not rely on implicit window.event global (non-standard, removed in Firefox).
+function handleLogin(event) {
   const loginLoading = document.getElementById('loginLoading');
   const loginError = document.getElementById('loginError');
   const loginErrorText = document.getElementById('loginErrorText');
-  const loginButton = event?.target?.closest('button');
+  const loginButton = event ? event.target.closest('button') : null;
 
   if (loginLoading) loginLoading.classList.remove('hidden');
   if (loginButton) {
@@ -113,6 +106,94 @@ function handleLogin() {
   window.location.href = appPath('/auth/login?action=redirect');
 }
 
+async function handleLocalLogin(event) {
+  if (event) event.preventDefault();
+
+  const usernameInput = document.getElementById('usernameInput');
+  const passwordInput = document.getElementById('current-password');
+  const submitBtn = document.getElementById('localLoginSubmitBtn');
+  const btnText = document.getElementById('localLoginBtnText');
+  const spin = document.getElementById('localLoginSpin');
+  const loginError = document.getElementById('loginError');
+  const loginErrorText = document.getElementById('loginErrorText');
+
+  if (!usernameInput || !passwordInput) return;
+
+  const username = usernameInput.value;
+  const password = passwordInput.value;
+
+  // Clear previous errors
+  if (loginError) loginError.classList.add('hidden');
+  if (loginErrorText) loginErrorText.textContent = '';
+
+  // Show loading
+  if (submitBtn) submitBtn.disabled = true;
+  if (btnText) btnText.classList.add('hidden');
+  if (spin) spin.classList.remove('hidden');
+  if (usernameInput) usernameInput.disabled = true;
+  if (passwordInput) passwordInput.disabled = true;
+
+  try {
+    const response = await fetch(appPath('/auth/login'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ username, password })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Invalid credentials or login failed');
+    }
+
+    // Success! Refresh status to load dashboard
+    const status = await checkAuthStatus();
+    
+    // Reset loading state if status check completes
+    if (submitBtn) submitBtn.disabled = false;
+    if (btnText) btnText.classList.remove('hidden');
+    if (spin) spin.classList.add('hidden');
+    if (usernameInput) {
+      usernameInput.disabled = false;
+      usernameInput.value = '';
+    }
+    if (passwordInput) {
+      passwordInput.disabled = false;
+      passwordInput.value = '';
+    }
+  } catch (error) {
+    console.error('Local login failed:', error);
+    if (loginError) loginError.classList.remove('hidden');
+    if (loginErrorText) loginErrorText.textContent = error.message;
+
+    // Reset button / inputs
+    if (submitBtn) submitBtn.disabled = false;
+    if (btnText) btnText.classList.remove('hidden');
+    if (spin) spin.classList.add('hidden');
+    if (usernameInput) usernameInput.disabled = false;
+    if (passwordInput) passwordInput.disabled = false;
+  }
+}
+
+function togglePasswordVisibility() {
+  const passwordInput = document.getElementById('current-password');
+  const toggleIcon = document.getElementById('passwordToggleIcon');
+  if (!passwordInput || !toggleIcon) return;
+
+  if (passwordInput.type === 'password') {
+    passwordInput.type = 'text';
+    toggleIcon.classList.remove('fa-eye');
+    toggleIcon.classList.add('fa-eye-slash');
+  } else {
+    passwordInput.type = 'password';
+    toggleIcon.classList.remove('fa-eye-slash');
+    toggleIcon.classList.add('fa-eye');
+  }
+}
+
 function handleLogout() {
   // Clear authentication status and redirect to logout endpoint
   isAuthenticated = false;
@@ -124,7 +205,7 @@ function handleLogout() {
 //  Show Different Application States (Login, Main Content, etc.)
 // =========================================================================
 
-function showLoginPage() {
+function showLoginPage(method) {
   const loginPage = document.getElementById('loginPage');
   const mainContent = document.getElementById('mainContent');
   const nav = document.querySelector('nav');
@@ -144,11 +225,55 @@ function showLoginPage() {
     footer.classList.add('hidden');
   }
   
+  // Configure visible containers based on authentication method
+  const oidcContainer = document.getElementById('oidcLoginContainer');
+  const localContainer = document.getElementById('localLoginContainer');
+  const authMethodText = document.getElementById('authMethodText');
+
+  if (oidcContainer) {
+    if (method === 'oidc') {
+      oidcContainer.classList.remove('hidden');
+      if (authMethodText) authMethodText.textContent = 'Secure authentication via OpenID Connect';
+    } else {
+      oidcContainer.classList.add('hidden');
+    }
+  }
+
+  if (localContainer) {
+    if (method === 'local') {
+      localContainer.classList.remove('hidden');
+      if (authMethodText) authMethodText.textContent = 'Secure local credentials login';
+    } else {
+      localContainer.classList.add('hidden');
+    }
+  }
+
   // Show login page
   if (loginPage) {
     loginPage.style.display = 'flex';
     loginPage.classList.remove('hidden');
   }
+}
+
+// [FIX M4] Show a clear error UI when the server is unreachable instead of silently
+// presenting a login form that will never succeed.
+function showServerError(message) {
+  const loginPage = document.getElementById('loginPage');
+  const mainContent = document.getElementById('mainContent');
+  const nav = document.querySelector('nav');
+  if (mainContent) { mainContent.style.display = 'none'; mainContent.classList.add('hidden'); }
+  if (nav) { nav.style.display = 'none'; nav.classList.add('hidden'); }
+
+  // Reuse loginPage as the error container
+  const oidcContainer = document.getElementById('oidcLoginContainer');
+  const localContainer = document.getElementById('localLoginContainer');
+  const loginError = document.getElementById('loginError');
+  const loginErrorText = document.getElementById('loginErrorText');
+  if (oidcContainer) oidcContainer.classList.add('hidden');
+  if (localContainer) localContainer.classList.add('hidden');
+  if (loginError) loginError.classList.remove('hidden');
+  if (loginErrorText) loginErrorText.textContent = 'Cannot reach server: ' + (message || 'unknown error') + '. Please refresh or check your connection.';
+  if (loginPage) { loginPage.style.display = 'flex'; loginPage.classList.remove('hidden'); }
 }
 
 function showMainContent() {
