@@ -1,4 +1,4 @@
-# Fail2Ban UI
+# Fail2Ban UI (with Local Auth & Hardened Security)
 
 **Enterprise-Grade Intrusion Detection System Management Platform**
 
@@ -6,9 +6,12 @@
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://golang.org/)
 [![Platform](https://img.shields.io/badge/Platform-Linux-lightgrey)](https://www.linux.org/)
 
+> [!NOTE]
+> This repository is a hardened fork of the original [swissmakers/fail2ban-ui](https://github.com/swissmakers/fail2ban-ui) project. It extends the platform by adding a local credentials-based authentication login layer (as a fallback when OIDC is disabled), brute-force IP lockout protection, timing attack mitigations, strict cookie isolation, global HTTP security headers, and Slowloris network timeout controls.
+
 Fail2Ban UI is a management platform for operating Fail2Ban across one or more Linux hosts. It provides a central place to review bans, search and unban IP addresses, manage jails and filters, and receive notifications.
 
-The project is maintained by Swissmakers GmbH and released under GPL-3.0.
+The original project is maintained by Swissmakers GmbH and released under GPL-3.0.
 
 [Quick start](#quick-start-container) • [Documentation](#documentation) • [Configuration reference](docs/configuration.md) • [Architecture](docs/architecture.md) • [Screenshots](#screenshots)
 
